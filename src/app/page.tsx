@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { dynamicRound, convertPaiseToRupee, formatPrice, generateId } from '@/lib/trading-utils';
+import { dynamicRound, convertPaiseToRupee, formatPrice, generateId, nseRound } from '@/lib/trading-utils';
 import SymbolSearch from '@/components/SymbolSearch';
 
 interface TradeWorkspace {
@@ -85,16 +85,17 @@ export default function UnifiedCommandCenter() {
     const rows = [];
     console.log(`Calculating levels with Entry: ${e}, ATR: ${a}, Risk: ${r}, Multiplier: ${multiplier}, Initial Qty: ${initQty}, Add Qty: ${addQty} tickSize: ${tsRupee}₹`);
     const startPrice = dynamicRound(e - tsRupee, tsRupee);
-    const startSL = dynamicRound(e + dist, tsRupee);
+    const startSL = nseRound(e + dist);
     rows.push({ label: 'START', trigger: formatPrice(e), price: startPrice, qty: initQty, sl: startSL, isAdd: false });
 
     for (let i = 1; i <= (7 + current.extraCount); i++) {
       const trigger = e - i;
       bank += shares;
       shares += addQty;
-      const slPrice = dynamicRound(trigger + ((r + bank) / shares), tsRupee);
+      const slPrice = nseRound(trigger + ((r + bank) / shares));
       const price = dynamicRound(trigger - (tsRupee * 2), tsRupee);
       rows.push({ label: `₹${formatPrice(trigger)}`, trigger: formatPrice(trigger), price: price, qty: addQty, total: shares, sl: slPrice, isAdd: true });
+      console.log(`Level ${i}: Trigger: ${trigger}, Price: ${price}, Qty: ${addQty}, Total Shares: ${shares}, Bank: ${bank}, SL: ${slPrice}`);
     }
     return rows;
   };

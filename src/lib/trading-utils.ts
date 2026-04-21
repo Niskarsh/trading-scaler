@@ -7,7 +7,12 @@ export const convertPaiseToRupee = (paise: number): number => {
 export const dynamicRound = (num: number, tickSizeRupee: number): number => {
   const ts = tickSizeRupee || 0.05;
   const inv = 1 / ts;
-  return Math.round(num * inv) / inv;
+  return Math.floor(num * inv) / inv;
+};
+
+// NSE round to 5 paise (0.05₹)
+export const nseRound = (num: number): number => {
+  return parseFloat((Math.floor(Math.round(num * 100) / 5) * 5 / 100).toFixed(2));
 };
 
 // Format price to 2 decimals for display
