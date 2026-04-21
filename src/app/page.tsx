@@ -14,6 +14,7 @@ interface TradeWorkspace {
   atr: string;
   entry: string;
   extraCount: number;
+  searchQuery: string;
 }
 
 export default function UnifiedCommandCenter() {
@@ -27,7 +28,10 @@ export default function UnifiedCommandCenter() {
     setAuth({ token: localStorage.getItem('d_token') || '' });
     const saved = JSON.parse(localStorage.getItem('active_workspaces') || '[]');
     if (saved.length > 0) setTrades(saved);
-    else addNewTrade();
+    else {
+      const newTrade = { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', extraCount: 0, searchQuery: '' };
+      setTrades([newTrade]);
+    }
   }, []);
 
   useEffect(() => {
@@ -46,7 +50,7 @@ export default function UnifiedCommandCenter() {
   };
 
   const addNewTrade = () => {
-    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', extraCount: 0 }]);
+    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', extraCount: 0, searchQuery: '' }]);
     setActiveIndex(trades.length);
   };
 
@@ -140,7 +144,7 @@ export default function UnifiedCommandCenter() {
             </select>
         </div>
 
-        <SymbolSearch segment={current.segment} onSelect={(sym, id, ts) => updateTrade({ symbol: sym, securityId: id, tickSize: ts })} />
+        <SymbolSearch segment={current.segment} searchQuery={current.searchQuery} onSearchChange={(query: string) => updateTrade({ searchQuery: query })} onSelect={(sym, id, ts) => updateTrade({ symbol: sym, securityId: id, tickSize: ts, searchQuery: sym })} />
 
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
@@ -170,7 +174,21 @@ export default function UnifiedCommandCenter() {
             <input type="number" step="0.05" value={current.entry} placeholder="0.00" className="w-full bg-black p-5 rounded-2xl border border-[#30363d] text-3xl font-black text-center text-[#2f81f7] outline-none shadow-inner" onChange={e => updateTrade({ entry: e.target.value })} />
         </div>
 
-        <button onClick={() => updateTrade({ atr: '', entry: '', extraCount: 0 })} className="w-full py-3 text-[10px] text-[#8b949e] font-black uppercase border border-[#30363d] rounded-xl hover:bg-[#21262d]">Clear Workspace</button>
+        <button onClick={() => updateTrade({ symbol: '', securityId: '', atr: '', entry: '', extraCount: 0, searchQuery: '' })} className="w-full py-3 text-[10px] text-[#8b949e] font-black uppercase border border-[#30363d] rounded-xl hover:bg-[#21262d]">Clear Workspace</button>
+
+        {trades.length > 1 && (
+          <button 
+            onClick={() => {
+              const newTrades = trades.filter((_, idx) => idx !== activeIndex);
+              setTrades(newTrades);
+              if (activeIndex >= newTrades.length) setActiveIndex(newTrades.length - 1);
+              else if (activeIndex > 0) setActiveIndex(activeIndex - 1);
+            }}
+            className="w-full py-3 text-[10px] text-white font-black uppercase border border-red-600 bg-red-600 hover:bg-red-700 rounded-xl transition-colors"
+          >
+            Delete Workspace
+          </button>
+        )}
       </div>
 
       {/* LADDERS */}
