@@ -12,19 +12,31 @@ async function loadData() {
     const results: any[] = [];
     let rowCount = 0;
     
-    console.log('Starting CSV streaming load...');
+    console.log('Starting CSV streaming load (filtered fields only)...');
     Papa.parse(stream, {
       header: true,
       skipEmptyLines: true,
       step: (row) => {
-        results.push(row.data);
+        // Only keep the fields we need to reduce memory footprint
+        const data = row.data as Record<string, string>;
+        const filtered = {
+          EXCH_ID: data.EXCH_ID,
+          INSTRUMENT: data.INSTRUMENT,
+          SYMBOL_NAME: data.SYMBOL_NAME,
+          DISPLAY_NAME: data.DISPLAY_NAME,
+          SECURITY_ID: data.SECURITY_ID,
+          TICK_SIZE: data.TICK_SIZE
+        };
+        results.push(filtered);
         rowCount++;
-        if (rowCount % 5000 === 0) {
-          console.log(`Loaded ${rowCount} rows...`);
+        if (rowCount % 10000 === 0) {
+          const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+          console.log(`Loaded ${rowCount} rows... Memory: ${memUsage}MB`);
         }
       },
       complete: () => {
-        console.log(`CSV loading complete. Total rows: ${rowCount}`);
+        const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+        console.log(`CSV loading complete. Total rows: ${rowCount}, Memory: ${memUsage}MB`);
         cachedMaster = results;
         resolve(results);
       },
@@ -43,9 +55,17 @@ async function loadData() {
 //   const csv = await fs.promises.readFile(csvPath, 'utf8');
 //   console.log('File read complete, parsing...');
 //   const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true }).data;
-//   console.log(`Parsing complete. Total rows: ${parsed.length}`);
-//   cachedMaster = parsed;
-//   return parsed;
+//   const filtered = parsed.map(row => ({
+//     EXCH_ID: row.EXCH_ID,
+//     INSTRUMENT: row.INSTRUMENT,
+//     SYMBOL_NAME: row.SYMBOL_NAME,
+//     DISPLAY_NAME: row.DISPLAY_NAME,
+//     SECURITY_ID: row.SECURITY_ID,
+//     TICK_SIZE: row.TICK_SIZE
+//   }));
+//   console.log(`Parsing complete. Total rows: ${filtered.length}`);
+//   cachedMaster = filtered;
+//   return filtered;
 // }
 
 export async function GET(request: Request) {
