@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "deploy": "next build && pm2 reload ecosystem.config.js --env production"
   },
   "dependencies": {
     "@types/papaparse": "^5.5.2",
