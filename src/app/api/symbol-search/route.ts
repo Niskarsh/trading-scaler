@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import Papa from 'papaparse';
+import fs from 'fs';
+import path from 'path';
 
 let cachedMaster: any[] = [];
 
@@ -10,8 +12,8 @@ export async function GET(request: Request) {
 
   try {
     if (cachedMaster.length === 0) {
-      const res = await fetch('https://images.dhan.co/api-data/api-scrip-master-detailed.csv');
-      const csv = await res.text();
+      const csvPath = path.join(process.cwd(), 'public', 'api-scrip-master-detailed.csv');
+      const csv = await fs.promises.readFile(csvPath, 'utf8');
       const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true }).data;
       cachedMaster = parsed;
     }
