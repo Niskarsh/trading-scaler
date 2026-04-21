@@ -8,7 +8,7 @@ export async function POST(request: Request) {
 
     if (!token || !clientId) return NextResponse.json({ error: 'Auth Missing' }, { status: 401 });
 
-    const results = [];
+    const results: Record<string, unknown>[] = [];
     for (const order of orders) {
       const payload = {
         dhanClientId: clientId,
@@ -21,8 +21,8 @@ export async function POST(request: Request) {
         securityId: securityId,
         quantity: parseInt(order.qty),
         disclosedQuantity: parseInt(order.qty),
-        price: parseFloat(order.price),
-        triggerPrice: parseFloat(order.trigger),
+        price: typeof order.price === 'number' ? order.price : parseFloat(order.price),
+        triggerPrice: typeof order.trigger === 'number' ? order.trigger : parseFloat(order.trigger),
         afterMarketOrder: false,
       };
 console.log("Placing Order:", payload);

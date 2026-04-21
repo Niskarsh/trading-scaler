@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { dynamicRound, generateId } from '@/lib/trading-utils';
+import { dynamicRound, convertPaiseToRupee, formatPrice, generateId } from '@/lib/trading-utils';
 import SymbolSearch from '@/components/SymbolSearch';
 
 interface TradeWorkspace {
@@ -35,7 +35,7 @@ export default function UnifiedCommandCenter() {
     if (auth.token) localStorage.setItem('d_token', auth.token);
   }, [trades, auth]);
 
-  const current = trades[activeIndex] || { segment: 'NSE_EQ', risk: '47', atr: '', entry: '', securityId: '', tickSize: 0.05 };
+  const current = trades[activeIndex] || { segment: 'NSE_EQ', risk: '47', atr: '', entry: '', securityId: '', tickSize: 5 };
 
   const updateTrade = (updates: Partial<TradeWorkspace>) => {
     setTrades(prev => {
@@ -46,7 +46,7 @@ export default function UnifiedCommandCenter() {
   };
 
   const addNewTrade = () => {
-    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 0.05, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', extraCount: 0 }]);
+    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', extraCount: 0 }]);
     setActiveIndex(trades.length);
   };
 
@@ -68,7 +68,8 @@ export default function UnifiedCommandCenter() {
     const r = parseFloat(current.risk) || 47;
     const a = parseFloat(current.atr);
     const e = parseFloat(current.entry);
-    const ts = current.tickSize || 0.05;
+    const tsPaise = current.tickSize || 5; // tickSize in paise from CSV
+    const tsRupee = convertPaiseToRupee(tsPaise); // convert to rupees
     if (!a || !e) return [];
 
     const dist = a * multiplier;
@@ -78,14 +79,18 @@ export default function UnifiedCommandCenter() {
     let shares = initQty;
     let bank = 0;
     const rows = [];
-    rows.push({ label: 'START', trigger: e.toFixed(2), price: dynamicRound(e - ts, ts), qty: initQty, sl: dynamicRound(e + dist, ts), isAdd: false });
+    console.log(`Calculating levels with Entry: ${e}, ATR: ${a}, Risk: ${r}, Multiplier: ${multiplier}, Initial Qty: ${initQty}, Add Qty: ${addQty} tickSize: ${tsRupee}₹`);
+    const startPrice = dynamicRound(e - tsRupee, tsRupee);
+    const startSL = dynamicRound(e + dist, tsRupee);
+    rows.push({ label: 'START', trigger: formatPrice(e), price: startPrice, qty: initQty, sl: startSL, isAdd: false });
 
     for (let i = 1; i <= (7 + current.extraCount); i++) {
       const trigger = e - i;
       bank += shares;
       shares += addQty;
-      const sl = dynamicRound(trigger + ((r + bank) / shares), ts);
-      rows.push({ label: `₹${trigger.toFixed(2)}`, trigger: trigger.toFixed(2), price: dynamicRound(trigger - (ts * 2), ts), qty: addQty, total: shares, sl, isAdd: true });
+      const slPrice = dynamicRound(trigger + ((r + bank) / shares), tsRupee);
+      const price = dynamicRound(trigger - (tsRupee * 2), tsRupee);
+      rows.push({ label: `₹${formatPrice(trigger)}`, trigger: formatPrice(trigger), price: price, qty: addQty, total: shares, sl: slPrice, isAdd: true });
     }
     return rows;
   };
@@ -180,7 +185,7 @@ export default function UnifiedCommandCenter() {
               <div key={idx} className={`grid grid-cols-4 py-4 border-b border-[#161b22] items-center font-mono text-xs ${idx === 0 ? 'bg-[#0d1117] rounded-xl px-2 my-1 border-none shadow-md' : ''}`}>
                 <span className={idx === 0 ? 'text-[#8b949e]' : 'text-white'}>{row.label}</span>
                 <span className="text-[#8b949e] text-center font-bold">{row.qty} ({row.total || row.qty})</span>
-                <span className="text-right font-black text-[#e6edf3]">{row.sl}</span>
+                <span className="text-right font-black text-[#e6edf3]">{formatPrice(row.sl)}</span>
                 <div className="text-right">
                   {row.isAdd && <button onClick={() => deploy([row])} className="text-[#2f81f7] border border-[#2f81f7]/40 px-3 py-1 rounded-lg active:bg-[#2f81f7] transition-colors">+</button>}
                 </div>
