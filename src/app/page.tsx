@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { dynamicRound, convertPaiseToRupee, formatPrice, generateId, nseRound } from '@/lib/trading-utils';
+import { convertPaiseToRupee, formatPrice, generateId, nseRound } from '@/lib/trading-utils';
 import SymbolSearch from '@/components/SymbolSearch';
 
 interface TradeWorkspace {
@@ -13,6 +13,7 @@ interface TradeWorkspace {
   risk: string;
   atr: string;
   entry: string;
+  interval: string;
   extraCount: number;
   searchQuery: string;
 }
@@ -29,7 +30,7 @@ export default function UnifiedCommandCenter() {
     const saved = JSON.parse(localStorage.getItem('active_workspaces') || '[]');
     if (saved.length > 0) setTrades(saved);
     else {
-      const newTrade = { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', extraCount: 0, searchQuery: '' };
+      const newTrade = { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', interval: '0.5', extraCount: 0, searchQuery: '' };
       setTrades([newTrade]);
     }
   }, []);
@@ -39,7 +40,7 @@ export default function UnifiedCommandCenter() {
     if (auth.token) localStorage.setItem('d_token', auth.token);
   }, [trades, auth]);
 
-  const current = trades[activeIndex] || { segment: 'NSE_EQ', risk: '47', atr: '', entry: '', securityId: '', tickSize: 5 };
+  const current = trades[activeIndex] || { segment: 'NSE_EQ', risk: '47', atr: '', entry: '', securityId: '', tickSize: 5, interval: '0.5' };
 
   const updateTrade = (updates: Partial<TradeWorkspace>) => {
     setTrades(prev => {
@@ -50,7 +51,7 @@ export default function UnifiedCommandCenter() {
   };
 
   const addNewTrade = () => {
-    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', extraCount: 0, searchQuery: '' }]);
+    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: '47', atr: '', entry: '', interval: '0.5', extraCount: 0, searchQuery: '' }]);
     setActiveIndex(trades.length);
   };
 
@@ -72,6 +73,7 @@ export default function UnifiedCommandCenter() {
     const r = parseFloat(current.risk) || 47;
     const a = parseFloat(current.atr);
     const e = parseFloat(current.entry);
+    const interval = parseFloat(current.interval) || 0.5;
     const tsPaise = current.tickSize || 5; // tickSize in paise from CSV
     const tsRupee = convertPaiseToRupee(tsPaise); // convert to rupees
     if (!a || !e) return [];
@@ -80,22 +82,28 @@ export default function UnifiedCommandCenter() {
     const initQty = Math.floor(r / dist);
     const addQty = Math.floor(initQty * 0.5);
     
-    let shares = initQty;
-    let bank = 0;
+    let shares = 0;
+    let totalValue = 0;
     const rows = [];
-    console.log(`Calculating levels with Entry: ${e}, ATR: ${a}, Risk: ${r}, Multiplier: ${multiplier}, Initial Qty: ${initQty}, Add Qty: ${addQty} tickSize: ${tsRupee}₹`);
-    const startPrice = dynamicRound(e - tsRupee, tsRupee);
-    const startSL = nseRound(e + dist);
+    console.log(`Calculating levels with Entry: ${e}, ATR: ${a}, Risk: ${r}, Interval: ${interval}, Multiplier: ${multiplier}, Initial Qty: ${initQty}, Add Qty: ${addQty} tickSize: ${tsRupee}₹`);
+    
+    // Initial position
+    const startPrice = nseRound(e - tsRupee);
+    shares = initQty;
+    totalValue = startPrice * initQty;
+    const avgPrice = totalValue / shares;
+    const startSL = nseRound(avgPrice + (r / shares));
     rows.push({ label: 'START', trigger: formatPrice(e), price: startPrice, qty: initQty, sl: startSL, isAdd: false });
 
-    for (let i = 1; i <= (7 + current.extraCount); i++) {
-      const trigger = e - i;
-      bank += shares;
+    for (let i = 1; i <= (9 + current.extraCount); i++) {
+      const trigger = e - (i * interval);
+      const price = nseRound(trigger - tsRupee); // Adjusted to be 5 paise lower
       shares += addQty;
-      const slPrice = nseRound(trigger + ((r + bank) / shares));
-      const price = dynamicRound(trigger - (tsRupee * 2), tsRupee);
+      totalValue += price * addQty;
+      const avgPrice = totalValue / shares;
+      const slPrice = nseRound(avgPrice + (r / shares));
       rows.push({ label: `₹${formatPrice(trigger)}`, trigger: formatPrice(trigger), price: price, qty: addQty, total: shares, sl: slPrice, isAdd: true });
-      console.log(`Level ${i}: Trigger: ${trigger}, Price: ${price}, Qty: ${addQty}, Total Shares: ${shares}, Bank: ${bank}, SL: ${slPrice}`);
+      console.log(`Level ${i}: Trigger: ${trigger}, Price: ${price}, Qty: ${addQty}, Total Shares: ${shares}, Avg Price: ${avgPrice.toFixed(2)}, SL: ${slPrice}`);
     }
     return rows;
   };
@@ -147,7 +155,7 @@ export default function UnifiedCommandCenter() {
 
         <SymbolSearch segment={current.segment} searchQuery={current.searchQuery} onSearchChange={(query: string) => updateTrade({ searchQuery: query })} onSelect={(sym, id, ts) => updateTrade({ symbol: sym, securityId: id, tickSize: ts, searchQuery: sym })} />
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
             <label className="text-[9px] text-[#8b949e] block mb-1 uppercase font-black">Total Risk (₹)</label>
             <input type="number" value={current.risk} className="w-full bg-transparent font-bold outline-none text-white" onChange={e => updateTrade({ risk: e.target.value })} />
@@ -155,6 +163,10 @@ export default function UnifiedCommandCenter() {
           <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
             <label className="text-[9px] text-[#8b949e] block mb-1 uppercase font-black">ATR (5M)</label>
             <input type="number" step="0.01" value={current.atr} className="w-full bg-transparent font-bold outline-none text-white" onChange={e => updateTrade({ atr: e.target.value })} />
+          </div>
+          <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
+            <label className="text-[9px] text-[#8b949e] block mb-1 uppercase font-black">Interval (₹)</label>
+            <input type="number" step="0.05" value={current.interval} className="w-full bg-transparent font-bold outline-none text-white" onChange={e => updateTrade({ interval: e.target.value })} />
           </div>
         </div>
 
@@ -175,7 +187,7 @@ export default function UnifiedCommandCenter() {
             <input type="number" step="0.05" value={current.entry} placeholder="0.00" className="w-full bg-black p-5 rounded-2xl border border-[#30363d] text-3xl font-black text-center text-[#2f81f7] outline-none shadow-inner" onChange={e => updateTrade({ entry: e.target.value })} />
         </div>
 
-        <button onClick={() => updateTrade({ symbol: '', securityId: '', atr: '', entry: '', extraCount: 0, searchQuery: '' })} className="w-full py-3 text-[10px] text-[#8b949e] font-black uppercase border border-[#30363d] rounded-xl hover:bg-[#21262d]">Clear Workspace</button>
+        <button onClick={() => updateTrade({ symbol: '', securityId: '', atr: '', entry: '', interval: '0.5', extraCount: 0, searchQuery: '' })} className="w-full py-3 text-[10px] text-[#8b949e] font-black uppercase border border-[#30363d] rounded-xl hover:bg-[#21262d]">Clear Workspace</button>
 
         {trades.length > 1 && (
           <button 
@@ -197,7 +209,7 @@ export default function UnifiedCommandCenter() {
         <div key={tIdx} className="mb-10">
           <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#010409] py-3 z-10 border-b border-[#161b22]">
             <h2 className="text-[#2f81f7] font-black text-[11px] uppercase tracking-tighter">{tIdx === 0 ? '1.5x' : '2.0x'} ATR Scale-In Plan</h2>
-            <button disabled={loading || !current.entry || !current.securityId} onClick={() => deploy(table.filter(r => r.isAdd).slice(0, 7))} className="bg-[#2f81f7] px-6 py-2 rounded-xl text-[10px] font-black shadow-lg disabled:opacity-20 active:scale-95 transition-all">DEPLOY 7</button>
+            <button disabled={loading || !current.entry || !current.securityId} onClick={() => deploy(table.filter(r => r.isAdd).slice(0, 9))} className="bg-[#2f81f7] px-6 py-2 rounded-xl text-[10px] font-black shadow-lg disabled:opacity-20 active:scale-95 transition-all">DEPLOY 9</button>
           </div>
           <div className="space-y-0">
             {table.map((row, idx) => (
