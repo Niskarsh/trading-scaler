@@ -21,7 +21,7 @@ export async function POST(request: Request) {
         securityId: securityId,
         quantity: parseInt(order.qty),
         disclosedQuantity: parseInt(order.qty),
-        price: typeof order.price === 'number' ? order.price : parseFloat(order.price),
+        price: parseFloat(((typeof order.trigger === 'number' ? order.trigger : parseFloat(order.trigger)) - 0.05).toFixed(2)),
         triggerPrice: typeof order.trigger === 'number' ? order.trigger : parseFloat(order.trigger),
         afterMarketOrder: false,
       };
