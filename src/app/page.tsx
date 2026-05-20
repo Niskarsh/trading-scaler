@@ -8,6 +8,7 @@ const DEFAULT_ATR = process.env.NEXT_PUBLIC_DEFAULT_ATR ?? '';
 const DEFAULT_ENTRY_COUNT = process.env.NEXT_PUBLIC_DEFAULT_SUBSEQUENT_ENTRIES ?? '9';
 const DEFAULT_INTERVAL = process.env.NEXT_PUBLIC_DEFAULT_INTERVAL ?? '0.5';
 import SymbolSearch from '@/components/SymbolSearch';
+import Totp from '@/components/Totp';
 
 interface TradeWorkspace {
   id: string;
@@ -31,7 +32,15 @@ export default function UnifiedCommandCenter() {
   const isProcessing = useRef(false);
 
   useEffect(() => {
-    setAuth({ token: localStorage.getItem('d_token') || '' });
+    // Get auth token from cookie
+    const getCookie = (name: string) => {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop()?.split(';').shift() || '';
+      return '';
+    };
+    const tokenFromCookie = getCookie('d_token');
+    setAuth({ token: tokenFromCookie });
     const saved = JSON.parse(localStorage.getItem('active_workspaces') || '[]');
     const normalized = Array.isArray(saved)
       ? saved.map((item: unknown) => {
@@ -60,7 +69,9 @@ export default function UnifiedCommandCenter() {
 
   useEffect(() => {
     if (trades.length > 0) localStorage.setItem('active_workspaces', JSON.stringify(trades));
-    if (auth.token) localStorage.setItem('d_token', auth.token);
+    if (auth.token) {
+      setCookie('d_token', auth.token, 18);
+    }
   }, [trades, auth]);
 
   const current = trades[activeIndex] || { segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', securityId: '', tickSize: 5, interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT };
@@ -76,6 +87,21 @@ export default function UnifiedCommandCenter() {
   const addNewTrade = () => {
     setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' }]);
     setActiveIndex(trades.length);
+  };
+
+  const setCookie = (key: string, value: string, duration?: number) => {
+    if (!key || !value) {
+      throw new Error('setCookie: key and value are required');
+    }
+    const durationHours = duration || 24;
+    const expiryDate = new Date();
+    expiryDate.setHours(expiryDate.getHours() + durationHours);
+    document.cookie = `${key}=${value}; expires=${expiryDate.toUTCString()}; path=/`;
+  };
+
+  const clearAuthCookie = () => {
+    document.cookie = 'd_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/';
+    setAuth({ token: '' });
   };
 
   // DASHBOARD MATH: Distance and Size
@@ -180,12 +206,34 @@ export default function UnifiedCommandCenter() {
         </div>
       </header>
       
+      {/* Totp Login - Collapsible */}
+      {!auth.token && <Totp setAuth={setAuth} />}
+
       {/* AUTH */}
-      <div className="bg-[#0d1117] p-4 rounded-2xl border border-[#30363d] mb-4 shadow-xl">
-        <input type="password" placeholder="Dhan Access Token" value={auth.token} className="w-full bg-black border border-[#30363d] p-4 rounded-xl text-xs text-center font-mono outline-none focus:border-[#2f81f7]" onChange={e => setAuth({ token: e.target.value })} />
+      <div className="bg-[#0d1117] p-4 rounded-2xl border border-[#30363d] mb-4 shadow-xl relative">
+        <div className="flex items-center gap-3">
+          <input type="password" placeholder="Dhan Access Token" value={auth.token} className="flex-1 bg-black border border-[#30363d] p-4 rounded-xl text-xs text-center font-mono outline-none focus:border-[#2f81f7]" onChange={e => setAuth({ token: e.target.value })} />
+          {auth.token && (
+            <button 
+              onClick={clearAuthCookie}
+              className="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 border border-red-600/40 rounded-lg text-red-400 font-bold text-xs transition-colors"
+              title="Clear auth token"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
+      {/* MASKED CONTENT - Only visible when authenticated */}
+      {!auth.token && (
+        <div className="bg-[#0d1117] p-6 rounded-2xl border border-[#30363d] mb-4 text-center text-[#8b949e]">
+          <span className="text-sm">⚠️ Please authenticate with TOTP to continue</span>
+        </div>
+      )}
+
       {/* TABS */}
+      {auth.token && (
       <div className="flex items-center space-x-2 overflow-x-auto pb-4 mb-4 no-scrollbar border-b border-[#30363d]">
         {trades.map((t, i) => (
           <button key={t.id} onClick={() => setActiveIndex(i)} className={`flex-shrink-0 px-5 py-2 rounded-xl text-xs font-bold transition-all border ${i === activeIndex ? 'bg-[#2f81f7] border-[#2f81f7] text-white shadow-lg shadow-blue-500/20' : 'bg-[#0d1117] text-[#8b949e] border-[#30363d]'}`}>
@@ -194,8 +242,10 @@ export default function UnifiedCommandCenter() {
         ))}
         <button onClick={addNewTrade} className="bg-[#21262d] px-4 py-2 rounded-xl text-[#2f81f7] font-black">+</button>
       </div>
+      )}
 
       {/* WORKSPACE */}
+      {auth.token && (
       <div className="bg-[#0d1117] p-5 rounded-3xl border border-[#30363d] mb-6 space-y-4 shadow-2xl">
         <div className="flex justify-between items-center">
             <span className="text-[10px] text-[#2f81f7] font-black uppercase tracking-widest">ID: {current.securityId || "---"}</span>
@@ -266,8 +316,11 @@ export default function UnifiedCommandCenter() {
           </button>
         )}
       </div>
+      )}
 
       {/* LADDERS */}
+      {auth.token && (
+      <div>
       {[calculateLevels(1.5), calculateLevels(2.0)].map((table, tIdx) => (
         <div key={tIdx} className="mb-10">
           <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#010409] py-3 z-10 border-b border-[#161b22]">
@@ -288,6 +341,8 @@ export default function UnifiedCommandCenter() {
           </div>
         </div>
       ))}
+      </div>
+      )}
     </div>
   );
 }
