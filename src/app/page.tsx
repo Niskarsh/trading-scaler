@@ -158,7 +158,8 @@ export default function UnifiedCommandCenter() {
   };
 
   return (
-    <main className="min-h-screen bg-[#010409] text-[#e6edf3] p-4 font-sans max-w-lg mx-auto pb-24">
+    <div className="min-h-screen bg-brand-bg text-brand-text selection:bg-brand-accent selection:text-brand-bg font-sans antialiased">
+
       {/* HEADER NAVIGATION */}
       <header className="sticky top-0 z-50 bg-brand-bg/80 backdrop-blur-md border-b border-brand-card/40 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -178,6 +179,7 @@ export default function UnifiedCommandCenter() {
           </nav>
         </div>
       </header>
+      
       {/* AUTH */}
       <div className="bg-[#0d1117] p-4 rounded-2xl border border-[#30363d] mb-4 shadow-xl">
         <input type="password" placeholder="Dhan Access Token" value={auth.token} className="w-full bg-black border border-[#30363d] p-4 rounded-xl text-xs text-center font-mono outline-none focus:border-[#2f81f7]" onChange={e => setAuth({ token: e.target.value })} />
@@ -286,6 +288,6 @@ export default function UnifiedCommandCenter() {
           </div>
         </div>
       ))}
-    </main>
+    </div>
   );
 }
