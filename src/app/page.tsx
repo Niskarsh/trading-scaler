@@ -159,6 +159,25 @@ export default function UnifiedCommandCenter() {
 
   return (
     <main className="min-h-screen bg-[#010409] text-[#e6edf3] p-4 font-sans max-w-lg mx-auto pb-24">
+      {/* HEADER NAVIGATION */}
+      <header className="sticky top-0 z-50 bg-brand-bg/80 backdrop-blur-md border-b border-brand-card/40 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="font-mono text-xl font-bold tracking-tight hidden md:block">
+              CANDLES<span className="text-brand-accent">BEFORE</span>CUBICLES
+            </span>
+            <span className="font-mono text-xl  tracking-tight">
+              TRADE<span className="text-brand-accent">ASSISTANT</span>
+            </span>
+          </div>
+          <nav className="hidden md:flex items-center space-x-8 text-sm font-medium tracking-wide">
+            <a href="#ecosystem" className="hover:text-brand-accent transition-colors">Ecosystem</a>
+            <a href="#philosophy" className="hover:text-brand-accent transition-colors">Philosophy</a>
+            <a href="#journey" className="hover:text-brand-accent transition-colors">The Shift</a>
+            <a href="https://youtube.com/@CandlesBeforeCubicles" target="_blank" rel="noopener noreferrer" className="hover:text-brand-accent transition-colors">YouTube</a>
+          </nav>
+        </div>
+      </header>
       {/* AUTH */}
       <div className="bg-[#0d1117] p-4 rounded-2xl border border-[#30363d] mb-4 shadow-xl">
         <input type="password" placeholder="Dhan Access Token" value={auth.token} className="w-full bg-black border border-[#30363d] p-4 rounded-xl text-xs text-center font-mono outline-none focus:border-[#2f81f7]" onChange={e => setAuth({ token: e.target.value })} />
