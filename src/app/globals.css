@@ -1,26 +1,83 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Core Canvas & Hierarchy (Exclusively Dark Theme / Terminal Aesthetic) */
+  --background: #0A1118;       /* Midnight Navy - Dominant (60%) */
+  --foreground: #E8EAF0;       /* Cool Off-White - Main Typography */
+
+  /* Dedicated Brand & UI Tokens */
+  --midnight-navy: #0A1118;
+  --gunmetal-slate: #16222F;   /* Structural (30%) - Cards, inputs, table container rows */
+  --candlelight-gold: #DFB15B; /* Accent (10%) - Brand identity, links, primary CTA buttons */
+  --cool-off-white: #E8EAF0;
+
+  /* Functional Utility Tokens (Strictly for Data/PnL Metrics) */
+  --muted-emerald: #1DC995;    /* Profit, targets, long/bull states */
+  --crimson-red: #E03F53;      /* Loss, stops, short/bear states */
 }
 
 @theme inline {
+  /* Overriding default utility classes */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  
+  /* Custom Semantic Color Design Tokens */
+  --color-brand-bg: var(--midnight-navy);
+  --color-brand-card: var(--gunmetal-slate);
+  --color-brand-accent: var(--candlelight-gold);
+  --color-brand-text: var(--cool-off-white);
+  
+  --color-data-green: var(--muted-emerald);
+  --color-data-red: var(--crimson-red);
+
+  /* Typography Fallbacks */
+  --font-sans: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  --font-mono: var(--font-geist-mono), Courier, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* Base resets & styling matching the brand look */
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* --- Optional Premium CSS Utilities for Candles Before Cubicles Apps --- */
+
+/* Financial Terminal Card Base */
+.terminal-card {
+  background-color: var(--gunmetal-slate);
+  border: 1px solid rgba(36, 52, 71, 0.5); /* #243447 split opacity border */
+  border-radius: 6px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+/* Primary Brand Interaction Action (Warm Gold filled with Dark text) */
+.btn-brand-primary {
+  background-color: var(--candlelight-gold);
+  color: var(--midnight-navy);
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
+}
+
+.btn-brand-primary:hover {
+  background-color: #d1a34f; /* Slightly deeper gold for active hover state */
+  cursor: pointer;
+}
+
+/* Input Fields styling matching the terminal */
+.terminal-input {
+  background-color: var(--midnight-navy);
+  color: var(--cool-off-white);
+  border: 1px solid var(--gunmetal-slate);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.terminal-input:focus {
+  outline: none;
+  border-color: var(--candlelight-gold);
 }
