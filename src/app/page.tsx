@@ -9,6 +9,7 @@ const DEFAULT_ENTRY_COUNT = process.env.NEXT_PUBLIC_DEFAULT_SUBSEQUENT_ENTRIES ?
 const DEFAULT_INTERVAL = process.env.NEXT_PUBLIC_DEFAULT_INTERVAL ?? '0.5';
 import SymbolSearch from '@/components/SymbolSearch';
 import Totp from '@/components/Totp';
+import DailyLossLimit from '@/components/DailyLossLimit';
 
 interface TradeWorkspace {
   id: string;
@@ -28,6 +29,7 @@ export default function UnifiedCommandCenter() {
   const [auth, setAuth] = useState({ token: '' });
   const [trades, setTrades] = useState<TradeWorkspace[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [loading, setLoading] = useState(false);
   const isProcessing = useRef(false);
 
@@ -97,6 +99,18 @@ export default function UnifiedCommandCenter() {
     const expiryDate = new Date();
     expiryDate.setHours(expiryDate.getHours() + durationHours);
     document.cookie = `${key}=${value}; expires=${expiryDate.toUTCString()}; path=/`;
+  };
+
+  const copyAuthTokenToClipboard = async () => {
+    if (!auth.token) return;
+    try {
+      await navigator.clipboard.writeText(auth.token);
+      setCopyStatus('copied');
+      window.setTimeout(() => setCopyStatus('idle'), 1500);
+    } catch {
+      setCopyStatus('error');
+      window.setTimeout(() => setCopyStatus('idle'), 1500);
+    }
   };
 
   const clearAuthCookie = () => {
@@ -222,6 +236,15 @@ export default function UnifiedCommandCenter() {
               ✕
             </button>
           )}
+          {auth.token && (
+            <button
+              onClick={copyAuthTokenToClipboard}
+              className="px-3 py-2 bg-[#2f81f7]/20 hover:bg-[#2f81f7]/40 border border-[#2f81f7]/40 rounded-lg text-[#2f81f7] font-bold text-xs transition-colors"
+              title="Copy auth token"
+            >
+              {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Error' : 'Copy'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -231,6 +254,8 @@ export default function UnifiedCommandCenter() {
           <span className="text-sm">⚠️ Please authenticate with TOTP to continue</span>
         </div>
       )}
+
+      {auth.token && <DailyLossLimit token={auth.token} />}
 
       {/* TABS */}
       {auth.token && (
