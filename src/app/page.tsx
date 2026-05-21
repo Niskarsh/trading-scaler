@@ -15,6 +15,7 @@ interface TradeWorkspace {
   id: string;
   symbol: string;
   securityId: string;
+  securityIdDirect: string;
   tickSize: number;
   segment: string;
   risk: string;
@@ -51,6 +52,7 @@ export default function UnifiedCommandCenter() {
             id: typeof trade.id === 'string' ? trade.id : generateId(),
             symbol: typeof trade.symbol === 'string' ? trade.symbol : '',
             securityId: typeof trade.securityId === 'string' ? trade.securityId : '',
+            securityIdDirect: typeof trade.securityIdDirect === 'string' ? trade.securityIdDirect : '',
             tickSize: typeof trade.tickSize === 'number' ? trade.tickSize : 5,
             segment: typeof trade.segment === 'string' ? trade.segment : 'NSE_EQ',
             risk: typeof trade.risk === 'string' ? trade.risk : DEFAULT_RISK,
@@ -64,7 +66,7 @@ export default function UnifiedCommandCenter() {
       : [];
     if (normalized.length > 0) setTrades(normalized);
     else {
-      const newTrade = { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' };
+      const newTrade = { id: generateId(), symbol: '', securityId: '', securityIdDirect: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' };
       setTrades([newTrade]);
     }
   }, []);
@@ -87,7 +89,7 @@ export default function UnifiedCommandCenter() {
   };
 
   const addNewTrade = () => {
-    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' }]);
+    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', securityIdDirect: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' }]);
     setActiveIndex(trades.length);
   };
 
@@ -280,7 +282,20 @@ export default function UnifiedCommandCenter() {
             </select>
         </div>
 
-        <SymbolSearch segment={current.segment} searchQuery={current.searchQuery} onSearchChange={(query: string) => updateTrade({ searchQuery: query })} onSelect={(sym, id, ts) => updateTrade({ symbol: sym, securityId: id, tickSize: ts, searchQuery: sym })} />
+        <SymbolSearch 
+          segment={current.segment} 
+          searchQuery={current.searchQuery} 
+          onSearchChange={(query: string) => updateTrade({ searchQuery: query })} 
+          onSelect={(sym, id, ts) => updateTrade({ symbol: sym, securityId: id, tickSize: ts, searchQuery: sym })}
+          securityIdDirect={current.securityIdDirect}
+          onSecurityIdDirectChange={(id: string) => {
+            if (id.length > 0) {
+              updateTrade({ securityIdDirect: id, securityId: id });
+            } else {
+              updateTrade({ securityIdDirect: '' });
+            }
+          }}
+        />
 
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
@@ -325,7 +340,7 @@ export default function UnifiedCommandCenter() {
             <input type="number" step="0.05" value={current.entry} placeholder="0.00" className="w-full bg-black p-5 rounded-2xl border border-[#30363d] text-3xl font-black text-center text-[#2f81f7] outline-none shadow-inner" onChange={e => updateTrade({ entry: e.target.value })} />
         </div>
 
-        <button onClick={() => updateTrade({ symbol: '', securityId: '', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' })} className="w-full py-3 text-[10px] text-[#8b949e] font-black uppercase border border-[#30363d] rounded-xl hover:bg-[#21262d]">Clear Workspace</button>
+        <button onClick={() => updateTrade({ symbol: '', securityId: '', securityIdDirect: '', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' })} className="w-full py-3 text-[10px] text-[#8b949e] font-black uppercase border border-[#30363d] rounded-xl hover:bg-[#21262d]">Clear Workspace</button>
 
         {trades.length > 1 && (
           <button 
