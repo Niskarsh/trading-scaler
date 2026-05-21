@@ -365,7 +365,7 @@ export default function UnifiedCommandCenter() {
         <div key={tIdx} className="mb-10">
           <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#010409] py-3 z-10 border-b border-[#161b22]">
             <h2 className="text-[#2f81f7] font-black text-[11px] uppercase tracking-tighter">{tIdx === 0 ? '1.5x' : '2.0x'} ATR Scale-In Plan</h2>
-            <button disabled={loading || !current.entry || !current.securityId} onClick={() => deploy(table.filter(r => r.isAdd))} className="bg-[#2f81f7] px-6 py-2 rounded-xl text-[10px] font-black shadow-lg disabled:opacity-20 active:scale-95 transition-all">DEPLOY {Number(current.entriesCount) || 1}</button>
+            <button disabled={loading || !current.entry || !current.securityId} onClick={() => deploy(table.filter(r => r.isAdd))} className="bg-brand-accent text-midnight-navy px-6 py-2 rounded-xl text-[10px] font-black shadow-lg disabled:opacity-20 active:scale-95 transition-all">DEPLOY {Number(current.entriesCount) || 1}</button>
           </div>
           <div className="space-y-0">
             {table.map((row, idx) => (
