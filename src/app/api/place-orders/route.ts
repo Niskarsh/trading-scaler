@@ -4,29 +4,36 @@ export async function POST(request: Request) {
   try {
     const token = request.headers.get('x-dhan-token');
     const clientId = process.env.DHAN_CLIENT_ID;
-    const { orders, tradingSymbol, securityId, segment } = await request.json();
+    const baseUrl = process.env.NODE_ENV === 'production'
+      ? process.env.DHAN_BASE_URL_PROD ?? 'https://api.dhan.co/v2'
+      : process.env.DHAN_BASE_URL_DEV ?? 'https://sandbox.dhan.co/v2';
+    const body = await request.json() as unknown;
+    const { orders, securityId, segment } = body as { orders: Array<Record<string, unknown>>; securityId?: string; segment?: string };
 
     if (!token || !clientId) return NextResponse.json({ error: 'Auth Missing' }, { status: 401 });
 
     const results: Record<string, unknown>[] = [];
-    for (const order of orders) {
+    for (const order of orders as Array<Record<string, unknown>>) {
+      const txn = typeof order.transactionType === 'string' ? order.transactionType.toUpperCase() : 'SELL';
+      const triggerVal = typeof (order.trigger) === 'number' ? (order.trigger as number) : parseFloat(String((order.trigger as unknown) || 0));
+      const priceOffset = txn === 'BUY' ? 0.05 : -0.05;
       const payload = {
         dhanClientId: clientId,
         correlationId: `pyr-${Date.now()}-${Math.random().toString(36).substring(7)}`.substring(0, 30),
-        transactionType: "SELL",
+        transactionType: txn,
         exchangeSegment: segment,
         productType: "INTRADAY",
         orderType: "STOP_LOSS",
         validity: "DAY",
         securityId: securityId,
-        quantity: parseInt(order.qty),
-        disclosedQuantity: parseInt(order.qty),
-        price: parseFloat(((typeof order.trigger === 'number' ? order.trigger : parseFloat(order.trigger)) - 0.05).toFixed(2)),
-        triggerPrice: typeof order.trigger === 'number' ? order.trigger : parseFloat(order.trigger),
+        quantity: parseInt(String((order.qty as unknown) || 0)),
+        disclosedQuantity: parseInt(String((order.qty as unknown) || 0)),
+        price: parseFloat((triggerVal + priceOffset).toFixed(2)),
+        triggerPrice: triggerVal,
         afterMarketOrder: false,
       };
 console.log("Placing Order:", payload);
-      const response = await fetch('https://api.dhan.co/v2/orders', {
+      const response = await fetch(`${baseUrl}/orders`, {
         method: 'POST',
         headers: {
           'access-token': token,
@@ -39,7 +46,8 @@ console.log("Placing Order:", payload);
       console.log(results)
     }
     return NextResponse.json({ count: results.length, results });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

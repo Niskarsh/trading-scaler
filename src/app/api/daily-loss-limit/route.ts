@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 
+const baseUrl = process.env.NODE_ENV === 'production'
+    ? process.env.DHAN_BASE_URL_PROD ?? 'https://api.dhan.co/v2'
+    : process.env.DHAN_BASE_URL_DEV ?? 'https://sandbox.dhan.co/v2';
 export async function POST(request: Request) {
     try {
         const token = request.headers.get('x-dhan-token');
@@ -26,7 +29,7 @@ export async function POST(request: Request) {
         //   --header 'access-token: ' \
         //   --data '{Request Body}'
 
-        const response = await fetch(`https://api.dhan.co/v2/pnlExit`, {
+        const response = await fetch(`${baseUrl}/pnlExit`, {
             method: 'POST',
             headers: {
                 'access-token': token,
@@ -43,8 +46,9 @@ export async function POST(request: Request) {
         const results = await response.json();
         console.log(results)
         return NextResponse.json({ data: results });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }
 
@@ -52,7 +56,7 @@ export async function GET(request: Request) {
     try {
         const token = request.headers.get('x-dhan-token');
         if (!token) return NextResponse.json({ error: 'Auth Missing' }, { status: 401 });
-        const response = await fetch(`https://api.dhan.co/v2/pnlExit`, {
+        const response = await fetch(`${baseUrl}/pnlExit`, {
             method: 'GET',
             headers: {
                 'access-token': token,
@@ -70,7 +74,8 @@ export async function GET(request: Request) {
         console.log(results)
 
         return NextResponse.json({ pnlLimitData: results });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

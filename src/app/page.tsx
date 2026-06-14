@@ -23,8 +23,19 @@ interface TradeWorkspace {
   entry: string;
   interval: string;
   entriesCount: string;
+  side: string;
   searchQuery: string;
 }
+
+type LevelRow = {
+  label: string;
+  trigger?: number | string;
+  price?: number;
+  qty?: number;
+  total?: number;
+  sl?: number;
+  isAdd?: boolean;
+};
 
 export default function UnifiedCommandCenter() {
   const [auth, setAuth] = useState({ token: '' });
@@ -60,13 +71,14 @@ export default function UnifiedCommandCenter() {
             entry: typeof trade.entry === 'string' ? trade.entry : '',
             interval: typeof trade.interval === 'string' ? trade.interval : DEFAULT_INTERVAL,
             entriesCount: typeof trade.entriesCount === 'number' ? String(trade.entriesCount) : typeof trade.entriesCount === 'string' ? trade.entriesCount : DEFAULT_ENTRY_COUNT,
+            side: typeof trade.side === 'string' ? trade.side : 'SHORT',
             searchQuery: typeof trade.searchQuery === 'string' ? trade.searchQuery : ''
           };
         })
       : [];
     if (normalized.length > 0) setTrades(normalized);
     else {
-      const newTrade = { id: generateId(), symbol: '', securityId: '', securityIdDirect: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' };
+      const newTrade = { id: generateId(), symbol: '', securityId: '', securityIdDirect: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, side: 'SHORT', searchQuery: '' };
       setTrades([newTrade]);
     }
   }, []);
@@ -78,7 +90,7 @@ export default function UnifiedCommandCenter() {
     }
   }, [trades, auth]);
 
-  const current = trades[activeIndex] || { segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', securityId: '', tickSize: 5, interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT };
+  const current = trades[activeIndex] || { segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', securityId: '', tickSize: 5, interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, side: 'SHORT' };
 
   const updateTrade = (updates: Partial<TradeWorkspace>) => {
     setTrades(prev => {
@@ -89,7 +101,7 @@ export default function UnifiedCommandCenter() {
   };
 
   const addNewTrade = () => {
-    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', securityIdDirect: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' }]);
+    setTrades([...trades, { id: generateId(), symbol: '', securityId: '', securityIdDirect: '', tickSize: 5, segment: 'NSE_EQ', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, side: 'SHORT', searchQuery: '' }]);
     setActiveIndex(trades.length);
   };
 
@@ -134,12 +146,14 @@ export default function UnifiedCommandCenter() {
     return { d15, s15, d20, s20 };
   }, [current.risk, current.atr]);
 
-  const calculateLevels = (multiplier: number) => {
+  const calculateLevels = (multiplier: number): LevelRow[] => {
     const r = parseFloat(current.risk) || 47;
     const a = parseFloat(current.atr);
     const e = parseFloat(current.entry);
     const interval = parseFloat(current.interval) || 0.5;
     const tsRupee = normalizeTickSize(current.tickSize, current.segment);
+    const side = (current.side || 'SHORT').toUpperCase();
+    const isShort = side === 'SHORT';
     if (!a || !e) return [];
 
     const dist = a * multiplier;
@@ -148,15 +162,23 @@ export default function UnifiedCommandCenter() {
     
     let shares = 0;
     let totalValue = 0;
-    const rows = [];
-    console.log(`Calculating levels with Entry: ${e}, ATR: ${a}, Risk: ${r}, Interval: ${interval}, Multiplier: ${multiplier}, Initial Qty: ${initQty}, Add Qty: ${addQty} tickSize: ${tsRupee}₹`);
+    const rows: LevelRow[] = [];
+    console.log(`Calculating levels (${side}) with Entry: ${e}, ATR: ${a}, Risk: ${r}, Interval: ${interval}, Multiplier: ${multiplier}, Initial Qty: ${initQty}, Add Qty: ${addQty} tickSize: ${tsRupee}₹`);
     
     // Helper function to calculate SL safely - keeps risk at or below limit
-    const calculateSLSafe = (avgPrice: number, riskLimit: number, shares: number, tsRupee: number): number => {
-      // Conservative: subtract one extra tick to guarantee we never exceed limit
-      const targetSL = avgPrice + (riskLimit / shares);
-      const ticksAway = Math.floor((targetSL - avgPrice) / tsRupee);
-      return avgPrice + ((ticksAway - 1) * tsRupee);
+    const calculateSLSafe = (avgPrice: number, riskLimit: number, shares: number, tsRupee: number, isShortSide: boolean): number => {
+      if (shares <= 0) return avgPrice;
+      if (isShortSide) {
+        // For SHORT: stop loss is above avg price
+        const targetSL = avgPrice + (riskLimit / shares);
+        const ticksAway = Math.floor((targetSL - avgPrice) / tsRupee);
+        return avgPrice + ((ticksAway - 1) * tsRupee);
+      } else {
+        // For LONG: stop loss is below avg price
+        const targetSL = avgPrice - (riskLimit / shares);
+        const ticksAway = Math.floor((avgPrice - targetSL) / tsRupee);
+        return avgPrice - ((ticksAway - 1) * tsRupee);
+      }
     };
     
     // Initial position
@@ -164,18 +186,18 @@ export default function UnifiedCommandCenter() {
     shares = initQty;
     totalValue = startPrice * initQty;
     let avgPrice = totalValue / shares;
-    const startSL = calculateSLSafe(avgPrice, r, shares, tsRupee);
+    const startSL = calculateSLSafe(avgPrice, r, shares, tsRupee, isShort);
     rows.push({ label: 'START', trigger: formatPrice(e), price: startPrice, qty: initQty, sl: startSL, isAdd: false });
 
     for (let i = 1; i <= (Number(current.entriesCount) || 1); i++) {
-      const trigger = roundToTick(e - (i * interval), tsRupee);
-      const price = roundToTick(trigger - tsRupee, tsRupee);
+      const trigger = roundToTick(isShort ? e - (i * interval) : e + (i * interval), tsRupee);
+      const price = roundToTick(isShort ? trigger - tsRupee : trigger + tsRupee, tsRupee);
       shares += addQty;
       totalValue += price * addQty;
       avgPrice = totalValue / shares;
-      const slPrice = calculateSLSafe(avgPrice, r, shares, tsRupee);
-      rows.push({ label: `₹${formatPrice(trigger)}`, trigger: formatPrice(trigger), price: price, qty: addQty, total: shares, sl: slPrice, isAdd: true });
-      const actualRisk = (slPrice - avgPrice) * shares;
+      const slPrice = calculateSLSafe(avgPrice, r, shares, tsRupee, isShort);
+      rows.push({ label: `₹${formatPrice(trigger)}`, trigger: trigger, price: price, qty: addQty, total: shares, sl: slPrice, isAdd: true });
+      const actualRisk = isShort ? (slPrice - avgPrice) * shares : (avgPrice - slPrice) * shares;
       console.log(`Level ${i}: Trigger: ${trigger}, Price: ${price}, Qty: ${addQty}, Total Shares: ${shares}, Avg Price: ${avgPrice.toFixed(2)}, SL: ${slPrice}, Actual Risk: ${actualRisk.toFixed(2)} (Limit: ${r})`);
     }
     return rows;
@@ -186,10 +208,16 @@ export default function UnifiedCommandCenter() {
     try {
       isProcessing.current = true;
       setLoading(true);
+      // Attach transactionType based on per-tab side
+      const mappedOrders = orders.map(o => {
+        const trigger = typeof o.trigger === 'number' ? o.trigger : parseFloat(String(o.trigger || 0));
+        return { ...o, trigger, transactionType: (current.side === 'LONG' ? 'BUY' : 'SELL') };
+      });
+
       const res = await fetch('/api/place-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-dhan-token': auth.token },
-        body: JSON.stringify({ orders, tradingSymbol: current.symbol, securityId: current.securityId, segment: current.segment })
+        body: JSON.stringify({ orders: mappedOrders, tradingSymbol: current.symbol, securityId: current.securityId, segment: current.segment })
       });
       const data = await res.json();
       alert(`SUCCESS: ${data.count} Orders Live.`);
@@ -280,6 +308,10 @@ export default function UnifiedCommandCenter() {
                 <option value="NSE_EQ">NSE Cash</option>
                 <option value="MCX_COMM">MCX Comm</option>
             </select>
+                <div className="flex items-center space-x-2">
+                  <button onClick={() => updateTrade({ side: 'SHORT' })} className={`px-3 py-1 rounded-lg text-[10px] font-black ${current.side === 'SHORT' ? 'bg-[#2f81f7] text-white' : 'bg-[#0d1117] text-[#8b949e] border border-[#30363d]'}`}>SHORT</button>
+                  <button onClick={() => updateTrade({ side: 'LONG' })} className={`px-3 py-1 rounded-lg text-[10px] font-black ${current.side === 'LONG' ? 'bg-[#2f81f7] text-white' : 'bg-[#0d1117] text-[#8b949e] border border-[#30363d]'}`}>LONG</button>
+                </div>
         </div>
 
         <SymbolSearch 
@@ -372,7 +404,7 @@ export default function UnifiedCommandCenter() {
               <div key={idx} className={`grid grid-cols-4 py-4 border-b border-[#161b22] items-center font-mono text-xs ${idx === 0 ? 'bg-[#0d1117] rounded-xl px-2 my-1 border-none shadow-md' : ''}`}>
                 <span className={idx === 0 ? 'text-[#8b949e]' : 'text-white'}>{row.label}</span>
                 <span className="text-[#8b949e] text-center font-bold">{row.qty} ({row.total || row.qty})</span>
-                <span className="text-right font-black text-[#e6edf3]">{formatPrice(row.sl)}</span>
+                <span className="text-right font-black text-[#e6edf3]">{formatPrice(row.sl ?? 0)}</span>
                 <div className="text-right">
                   {row.isAdd && <button onClick={() => deploy([row])} className="text-[#2f81f7] border border-[#2f81f7]/40 px-3 py-1 rounded-lg active:bg-[#2f81f7] transition-colors">+</button>}
                 </div>

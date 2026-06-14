@@ -16,7 +16,8 @@ export default function SymbolSearch({
   securityIdDirect: string,
   onSecurityIdDirectChange: (id: string) => void
 }) {
-  const [results, setResults] = useState<any[]>([]);
+  type SearchResult = { symbol: string; displayName?: string; id: string; tickSize: number };
+  const [results, setResults] = useState<SearchResult[]>([]);
   const isSecurityIdMode = securityIdDirect.length > 0;
 
   const handleSearch = async (val: string) => {

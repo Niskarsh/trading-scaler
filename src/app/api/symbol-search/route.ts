@@ -3,13 +3,22 @@ import Papa from 'papaparse';
 import fs from 'fs';
 import path from 'path';
 
-let cachedMaster: any[] = [];
+type CsvRow = {
+  EXCH_ID: string;
+  INSTRUMENT: string;
+  SYMBOL_NAME: string;
+  DISPLAY_NAME: string;
+  SECURITY_ID: string;
+  TICK_SIZE: string;
+};
+
+let cachedMaster: CsvRow[] = [];
 
 async function loadData() {
   return new Promise((resolve, reject) => {
     const csvPath = path.join(process.cwd(), 'public', 'api-scrip-master-detailed.csv');
     const stream = fs.createReadStream(csvPath, { encoding: 'utf8' });
-    const results: any[] = [];
+    const results: CsvRow[] = [];
     let rowCount = 0;
     
     console.log('Starting CSV streaming load (filtered fields only)...');
@@ -85,7 +94,7 @@ export async function GET(request: Request) {
     }
 
     const filtered = cachedMaster
-      .filter((s: any) => {
+      .filter((s: CsvRow) => {
         // Map CSV EXCH_ID to Dhan API segments
         const isNseEq = segmentFilter === 'NSE_EQ' && s.EXCH_ID === 'NSE' && s.INSTRUMENT === 'EQUITY';
         const isMcx = segmentFilter === 'MCX_COMM' && s.EXCH_ID === 'MCX';
@@ -94,7 +103,7 @@ export async function GET(request: Request) {
         return (isNseEq || isMcx || isNseFno) && s.SYMBOL_NAME?.toLowerCase().includes(query);
       })
       .slice(0, 8)
-      .map((s: any) => ({
+      .map((s: CsvRow) => ({
         symbol: s.SYMBOL_NAME,
         displayName: s.DISPLAY_NAME,
         id: s.SECURITY_ID,
