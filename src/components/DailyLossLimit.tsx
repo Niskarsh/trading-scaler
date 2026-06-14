@@ -83,7 +83,7 @@ export default function DailyLossLimit({ token }: DailyLossLimitProps) {
   }, [token]);
 
   return (
-    <div className="bg-[#0d1117] p-5 rounded-3xl border border-[#30363d] mb-6 shadow-xl">
+    <div className="bg-brand-card p-5 rounded-3xl border border-[#30363d] mb-6 shadow-xl">
       <div className="flex items-center justify-between mb-4">
         <div>
           <p className="text-[10px] uppercase tracking-widest text-[#8b949e] font-black">Daily Loss Limit</p>
@@ -134,7 +134,7 @@ export default function DailyLossLimit({ token }: DailyLossLimitProps) {
           <button
             disabled={dailyLimitSaving || !lossValueInput}
             onClick={saveDailyLossLimit}
-            className="w-full py-3 text-[10px] text-white font-black uppercase rounded-xl bg-[#2f81f7] disabled:opacity-40"
+            className="w-full py-3 bg-brand-accent text-[10px] text-brand-bg disabled:text-white font-black uppercase rounded-xl disabled:opacity-40"
           >
             {dailyLimitSaving ? 'Saving...' : 'Enable Intraday Kill Switch'}
           </button>

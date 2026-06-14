@@ -228,7 +228,7 @@ export default function UnifiedCommandCenter() {
   };
 
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-text selection:bg-brand-accent selection:text-brand-bg font-sans antialiased">
+    <div className="min-h-screen bg-brand-bg/20 p-2 text-brand-text selection:bg-brand-accent selection:text-brand-bg font-sans antialiased">
 
       {/* HEADER NAVIGATION */}
       <header className="sticky top-0 z-50 bg-brand-bg/80 backdrop-blur-md border-b border-brand-card/40 px-6 py-4">
@@ -254,7 +254,7 @@ export default function UnifiedCommandCenter() {
       {!auth.token && <Totp setAuth={setAuth} />}
 
       {/* AUTH */}
-      <div className="bg-[#0d1117] p-4 rounded-2xl border border-[#30363d] mb-4 shadow-xl relative">
+      <div className="bg-brand-card p-4 rounded-2xl border border-[#30363d] mb-4 shadow-xl relative">
         <div className="flex items-center gap-3">
           <input type="password" placeholder="Dhan Access Token" value={auth.token} className="flex-1 bg-black border border-[#30363d] p-4 rounded-xl text-xs text-center font-mono outline-none focus:border-[#2f81f7]" onChange={e => setAuth({ token: e.target.value })} />
           {auth.token && (
@@ -291,26 +291,29 @@ export default function UnifiedCommandCenter() {
       {auth.token && (
       <div className="flex items-center space-x-2 overflow-x-auto pb-4 mb-4 no-scrollbar border-b border-[#30363d]">
         {trades.map((t, i) => (
-          <button key={t.id} onClick={() => setActiveIndex(i)} className={`flex-shrink-0 px-5 py-2 rounded-xl text-xs font-bold transition-all border ${i === activeIndex ? 'bg-[#2f81f7] border-[#2f81f7] text-white shadow-lg shadow-blue-500/20' : 'bg-[#0d1117] text-[#8b949e] border-[#30363d]'}`}>
+          <button key={t.id} onClick={() => setActiveIndex(i)} className={`flex-shrink-0 px-5 py-2 rounded-xl text-xs font-bold transition-all border ${i === activeIndex ? 'bg-brand-accent/80 border-brand-accent/10 text-brand-bg shadow-lg shadow-blue-500/20' : 'bg-brand-card text-brand-text border-brand-accent/80 hover:bg-brand-accent/10 hover:border-brand-accent/20'}`}>
             {t.symbol || 'EMPTY'}
           </button>
         ))}
-        <button onClick={addNewTrade} className="bg-[#21262d] px-4 py-2 rounded-xl text-[#2f81f7] font-black">+</button>
+        <button onClick={addNewTrade} className="bg-brand-card px-4 py-2 rounded-xl text-[#2f81f7] font-black border border-[#30363d]">+</button>
       </div>
       )}
 
       {/* WORKSPACE */}
       {auth.token && (
-      <div className="bg-[#0d1117] p-5 rounded-3xl border border-[#30363d] mb-6 space-y-4 shadow-2xl">
+      <div className="bg-brand-card p-5 rounded-3xl border border-[#30363d] mb-6 space-y-4 shadow-2xl">
         <div className="flex justify-between items-center">
-            <span className="text-[10px] text-[#2f81f7] font-black uppercase tracking-widest">ID: {current.securityId || "---"}</span>
-            <select value={current.segment} onChange={e => updateTrade({ segment: e.target.value, symbol: '', securityId: '' })} className="bg-black border border-[#30363d] text-[10px] font-bold text-[#3fb950] p-1 rounded uppercase outline-none">
+            <span>
+            <span className="text-[10px] text-brand-text font-black uppercase tracking-widest">ID:</span>
+            <span className="text-[10px] text-brand-text uppercase tracking-widest"> {current.securityId || "---"}</span>
+            </span>
+            <select value={current.segment} onChange={e => updateTrade({ segment: e.target.value, symbol: '', securityId: '' })} className="bg-brand-bg border border-brand-bg/80 text-[10px] font-bold text-data-green p-1 rounded uppercase outline-none focus:border-data-green/40 focus:bg-brand-bg/80 transition-colors selection:bg-brand-accent selection:text-brand-bg hover:bg-brand-bg/80">
                 <option value="NSE_EQ">NSE Cash</option>
                 <option value="MCX_COMM">MCX Comm</option>
             </select>
                 <div className="flex items-center space-x-2">
-                  <button onClick={() => updateTrade({ side: 'SHORT' })} className={`px-3 py-1 rounded-lg text-[10px] font-black ${current.side === 'SHORT' ? 'bg-[#2f81f7] text-white' : 'bg-[#0d1117] text-[#8b949e] border border-[#30363d]'}`}>SHORT</button>
-                  <button onClick={() => updateTrade({ side: 'LONG' })} className={`px-3 py-1 rounded-lg text-[10px] font-black ${current.side === 'LONG' ? 'bg-[#2f81f7] text-white' : 'bg-[#0d1117] text-[#8b949e] border border-[#30363d]'}`}>LONG</button>
+                  <button onClick={() => updateTrade({ side: 'SHORT' })} className={`px-3 py-1 rounded-lg text-[10px] font-black ${current.side === 'SHORT' ? 'bg-data-red text-brand-text' : 'bg-[#0d1117] text-[#8b949e] border border-[#30363d] hover:bg-data-red/40 hover:border-data-red/40 hover:text-brand-text'}`}>SHORT</button>
+                  <button onClick={() => updateTrade({ side: 'LONG' })} className={`px-3 py-1 rounded-lg text-[10px] font-black ${current.side === 'LONG' ? 'bg-data-green text-brand-text' : 'bg-[#0d1117] text-[#8b949e] border border-[#30363d] hover:bg-data-green/40 hover:border-data-green/40 hover:text-brand-text'}`}>LONG</button>
                 </div>
         </div>
 
@@ -330,20 +333,20 @@ export default function UnifiedCommandCenter() {
         />
 
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
-            <label className="text-[9px] text-[#8b949e] block mb-1 uppercase font-black">Total Risk (₹)</label>
-            <input type="number" value={current.risk} className="w-full bg-transparent font-bold outline-none text-white" onChange={e => updateTrade({ risk: e.target.value })} />
+          <div className="p-3 rounded-2xl border border-[#30363d]">
+            <label className="text-[9px] text-brand-text block mb-1 uppercase ">Total Risk (₹)</label>
+            <input type="number" value={current.risk} className="w-full bg-transparent font-bold outline-none text-data-red" onChange={e => updateTrade({ risk: e.target.value })} />
           </div>
-          <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
-            <label className="text-[9px] text-[#8b949e] block mb-1 uppercase font-black">ATR (5M)</label>
-            <input type="number" step="0.01" value={current.atr} className="w-full bg-transparent font-bold outline-none text-white" onChange={e => updateTrade({ atr: e.target.value })} />
+          <div className="p-3 rounded-2xl border border-[#30363d]">
+            <label className="text-[9px] text-brand-text block mb-1 uppercase">ATR (5M)</label>
+            <input type="number" step="0.01" value={current.atr} className="w-full bg-transparent font-bold outline-none text-data-green" onChange={e => updateTrade({ atr: e.target.value })} />
           </div>
-          <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
-            <label className="text-[9px] text-[#8b949e] block mb-1 uppercase font-black">Interval (₹)</label>
+          <div className="p-3 rounded-2xl border border-[#30363d]">
+            <label className="text-[9px] text-brand-text block mb-1 uppercase">Interval (₹)</label>
             <input type="number" step="0.05" value={current.interval} className="w-full bg-transparent font-bold outline-none text-white" onChange={e => updateTrade({ interval: e.target.value })} />
           </div>
-          <div className="bg-black p-3 rounded-2xl border border-[#30363d]">
-            <label className="text-[9px] text-[#8b949e] block mb-1 uppercase font-black">Subsequent Entries</label>
+          <div className="p-3 rounded-2xl border border-[#30363d]">
+            <label className="text-[9px] text-brand-text block mb-1 uppercase">Subsequent Entries</label>
             <input
               type="number"
               min={1}
@@ -357,19 +360,19 @@ export default function UnifiedCommandCenter() {
 
         {/* RESTORED COCKPIT CARDS */}
         <div className="grid grid-cols-2 gap-3">
-            <div className="bg-black border border-[#30363d] p-4 rounded-2xl text-center relative overflow-hidden group">
-                <span className="block text-xl font-black text-[#3fb950]">{stats.d15.toFixed(2)} | {stats.s15}</span>
-                <span className="text-[9px] text-[#8b949e] uppercase font-bold">1.5x (Dist | Size)</span>
+            <div className="bg-brand-bg border border-brand-bg/80 p-4 rounded-2xl text-center relative overflow-hidden group">
+                <span className="block text-xl font-black text-brand-accent">{stats.d15.toFixed(2)} | {stats.s15}</span>
+                <span className="text-[9px] text-brand-text uppercase font-bold">1.5x (Dist | Size)</span>
             </div>
-            <div className="bg-black border border-[#30363d] p-4 rounded-2xl text-center relative overflow-hidden group">
-                <span className="block text-xl font-black text-[#3fb950]">{stats.d20.toFixed(2)} | {stats.s20}</span>
-                <span className="text-[9px] text-[#8b949e] uppercase font-bold">2.0x (Dist | Size)</span>
+            <div className="bg-brand-bg border border-brand-bg/80 p-4 rounded-2xl text-center relative overflow-hidden group">
+                <span className="block text-xl font-black text-brand-accent">{stats.d20.toFixed(2)} | {stats.s20}</span>
+                <span className="text-[9px] text-brand-text uppercase font-bold">2.0x (Dist | Size)</span>
             </div>
         </div>
 
         <div>
-            <label className="text-[9px] text-[#8b949e] uppercase block mb-1 text-center font-black">Entry Fill Price</label>
-            <input type="number" step="0.05" value={current.entry} placeholder="0.00" className="w-full bg-black p-5 rounded-2xl border border-[#30363d] text-3xl font-black text-center text-[#2f81f7] outline-none shadow-inner" onChange={e => updateTrade({ entry: e.target.value })} />
+            <label className="text-[9px] text-brand-text uppercase block mb-1 text-center">Entry Fill Price</label>
+            <input type="number" step="0.05" value={current.entry} placeholder="0.00" className="w-full bg-brand-bg p-5 rounded-2xl border border-brand-bg/80 text-3xl font-black text-center text-brand-text outline-none shadow-inner" onChange={e => updateTrade({ entry: e.target.value })} />
         </div>
 
         <button onClick={() => updateTrade({ symbol: '', securityId: '', securityIdDirect: '', risk: DEFAULT_RISK, atr: DEFAULT_ATR, entry: '', interval: DEFAULT_INTERVAL, entriesCount: DEFAULT_ENTRY_COUNT, searchQuery: '' })} className="w-full py-3 text-[10px] text-[#8b949e] font-black uppercase border border-[#30363d] rounded-xl hover:bg-[#21262d]">Clear Workspace</button>
@@ -395,18 +398,18 @@ export default function UnifiedCommandCenter() {
       <div>
       {[calculateLevels(1.5), calculateLevels(2.0)].map((table, tIdx) => (
         <div key={tIdx} className="mb-10">
-          <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#010409] py-3 z-10 border-b border-[#161b22]">
-            <h2 className="text-[#2f81f7] font-black text-[11px] uppercase tracking-tighter">{tIdx === 0 ? '1.5x' : '2.0x'} ATR Scale-In Plan</h2>
-            <button disabled={loading || !current.entry || !current.securityId} onClick={() => deploy(table.filter(r => r.isAdd))} className="bg-brand-accent text-midnight-navy px-6 py-2 rounded-xl text-[10px] font-black shadow-lg disabled:opacity-20 active:scale-95 transition-all">DEPLOY {Number(current.entriesCount) || 1}</button>
+          <div className="flex justify-between items-center mb-4 sticky top-0  py-3 z-10 border-b border-[#161b22]">
+            <h2 className="text-brand-accent font-black text-[11px] uppercase tracking-tighter">{tIdx === 0 ? '1.5x' : '2.0x'} ATR Scale-In Plan</h2>
+            <button disabled={loading || !current.entry || !current.securityId} onClick={() => deploy(table.filter(r => r.isAdd))} className="bg-brand-accent text-brand-bg px-6 py-2 rounded-xl text-[10px] font-black shadow-lg disabled:opacity-20 active:scale-95 transition-all">DEPLOY {Number(current.entriesCount) || 1}</button>
           </div>
           <div className="space-y-0">
             {table.map((row, idx) => (
-              <div key={idx} className={`grid grid-cols-4 py-4 border-b border-[#161b22] items-center font-mono text-xs ${idx === 0 ? 'bg-[#0d1117] rounded-xl px-2 my-1 border-none shadow-md' : ''}`}>
+              <div key={idx} className={`grid grid-cols-4 py-4 border-b border-[#161b22] bg-brand-card items-center font-mono text-xs p-2 rounded`}>
                 <span className={idx === 0 ? 'text-[#8b949e]' : 'text-white'}>{row.label}</span>
                 <span className="text-[#8b949e] text-center font-bold">{row.qty} ({row.total || row.qty})</span>
                 <span className="text-right font-black text-[#e6edf3]">{formatPrice(row.sl ?? 0)}</span>
                 <div className="text-right">
-                  {row.isAdd && <button onClick={() => deploy([row])} className="text-[#2f81f7] border border-[#2f81f7]/40 px-3 py-1 rounded-lg active:bg-[#2f81f7] transition-colors">+</button>}
+                  {row.isAdd && <button onClick={() => deploy([row])} className="text-brand-accent/80 font-black  px-3 py-1 rounded-lg bg-brand-bg active:bg-[#2f81f7] transition-colors">+</button>}
                 </div>
               </div>
             ))}

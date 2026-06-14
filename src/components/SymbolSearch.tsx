@@ -80,7 +80,7 @@ export default function SymbolSearch({
             {results.map(s => (
               <div key={s.id} onClick={() => handleSelect(s.symbol, s.id, s.tickSize)} className="p-4 hover:bg-[#21262d] border-b border-[#30363d] last:border-0 flex justify-between items-center cursor-pointer">
                 <span className="font-bold text-xs">{s.symbol}</span>
-                <span className="text-[10px] text-[#2f81f7] font-mono">ID: {s.id}</span>
+                <span className="text-[10px] text-brand-text font-mono">ID: {s.id}</span>
               </div>
             ))}
           </div>
