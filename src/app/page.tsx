@@ -295,7 +295,7 @@ export default function UnifiedCommandCenter() {
             {t.symbol || 'EMPTY'}
           </button>
         ))}
-        <button onClick={addNewTrade} className="bg-brand-card px-4 py-2 rounded-xl text-[#2f81f7] font-black border border-[#30363d]">+</button>
+        <button onClick={addNewTrade} className="bg-brand-card px-4 py-1 rounded-xl text-brand-text font-black border border-brand-accent/80 hover:bg-brand-accent/10 hover:border-brand-accent/20">+</button>
       </div>
       )}
 
