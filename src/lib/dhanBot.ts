@@ -49,6 +49,10 @@ export function placeShort(token: string, o: { securityId: string; qty: number; 
   });
 }
 
+/** Dhan's kill switch: no order on the whole account for the rest of the trading day. Dhan wants no open position and no pending order first. */
+export const activateKillSwitch = (token: string) => req<{ killSwitchStatus?: string }>(token, 'POST', '/killswitch?killSwitchStatus=ACTIVATE');
+export const killSwitchStatus = (token: string) => req<{ killSwitchStatus?: string }>(token, 'GET', '/killswitch');
+
 export const cancelLeg = (token: string, orderId: string, leg: 'ENTRY_LEG' | 'TARGET_LEG' | 'STOP_LOSS_LEG') => req<unknown>(token, 'DELETE', `/super/orders/${orderId}/${leg}`);
 
 /** a plain market order (to close what is left open) */

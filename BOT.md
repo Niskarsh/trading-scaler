@@ -7,7 +7,7 @@ server's fixed IP.
 
 - `POST /api/te`: the only door for tradereye. Every call is sealed (AES-256-GCM) with `TE_SHARED_SECRET`, so nobody
   without the secret can read it (it carries your Dhan token) or forge one. Calls older than a minute, or replayed, are
-  refused. Actions: `ping`, `place`, `status`, `squareoff`.
+  refused. Actions: `ping`, `place`, `status`, `squareoff`, `killstatus`, `killswitch`.
 - **Orders**: shorts only, as Dhan super orders (market entry, stop and target placed with it), INTRADAY, NSE.
   correlationId `te-<date>-<symbol>`.
 - **Guards on this server** (whatever tradereye asks):
