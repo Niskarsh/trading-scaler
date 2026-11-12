@@ -7,7 +7,8 @@ server's fixed IP.
 
 - `POST /api/te`: the only door for tradereye. Every call is sealed (AES-256-GCM) with `TE_SHARED_SECRET`, so nobody
   without the secret can read it (it carries your Dhan token) or forge one. Calls older than a minute, or replayed, are
-  refused. Actions: `ping`, `place`, `status`, `squareoff`, `killstatus`, `killswitch`.
+  refused. Actions: `ping`, `place`, `status`, `squareoff`, `killstatus`, `killswitch`, and for tradereye's Charts page
+  `book`, `clearall`, `flatten`, `move`, `cancel` (below).
 - **Orders**: shorts only, as Dhan super orders (market entry, stop and target placed with it), INTRADAY, NSE.
   correlationId `te-<date>-<symbol>`.
 - **Guards on this server** (whatever tradereye asks):
@@ -19,6 +20,12 @@ server's fixed IP.
 - **15:15 IST**: closes every bot position. It cancels entries that never filled, cancels the stop and target, then
   buys back at market. It uses the Dhan token tradereye last sent (kept in memory only). Orders you place by hand are
   never touched.
+- **Chart buttons (one stock, tradereye's Charts page)**: these act on *every* order of that one stock, hand-placed
+  ones included, and only when you press the button on that stock's chart (tradereye asks you to confirm first).
+  `book` lists its position and working orders; `clearall` cancels its working orders (the position stays);
+  `flatten` cancels them, checks they are gone, then closes the position at market (never while a stop or target is
+  still live: it reports that instead); `move` moves a stop / target / limit (a dragged line, or Break-even); `cancel`
+  cancels one order (the ✕ on its line). None of them opens a new position. Logic: `src/lib/symbolOrders.ts`.
 - **Everything else** (your existing pages and APIs) now asks for a password (HTTP Basic: user `UI_USER`, default
   `nik`, password `UI_PASSWORD`).
 
