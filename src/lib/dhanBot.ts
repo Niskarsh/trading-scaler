@@ -56,9 +56,36 @@ export const killSwitchStatus = (token: string) => req<{ killSwitchStatus?: stri
 export const cancelLeg = (token: string, orderId: string, leg: 'ENTRY_LEG' | 'TARGET_LEG' | 'STOP_LOSS_LEG') => req<unknown>(token, 'DELETE', `/super/orders/${orderId}/${leg}`);
 
 /** a plain market order (to close what is left open) */
-export function marketOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; correlationId: string }) {
+export function marketOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; correlationId: string; productType?: string }) {
   return req<{ orderId: string; orderStatus: string }>(token, 'POST', '/orders', {
-    dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: 'INTRADAY',
+    dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: o.productType ?? 'INTRADAY',
     orderType: 'MARKET', validity: 'DAY', securityId: String(o.securityId), quantity: o.qty, disclosedQuantity: 0, price: 0, triggerPrice: 0, afterMarketOrder: false,
   });
+}
+
+/** an ordinary order (anything not a super order: SL / SL-M / LIMIT placed by hand or by TradingView) */
+export interface PlainOrder {
+  orderId: string; correlationId?: string; orderStatus: string; transactionType: string; productType: string; orderType: string; validity?: string;
+  tradingSymbol?: string; securityId: string; quantity: number; remainingQuantity?: number; filledQty?: number; price?: number; triggerPrice?: number;
+  disclosedQuantity?: number; legName?: string;
+}
+export const orderList = (token: string) => req<PlainOrder[]>(token, 'GET', '/orders').then((r) => (Array.isArray(r) ? r : []));
+export const cancelOrder = (token: string, orderId: string) => req<unknown>(token, 'DELETE', `/orders/${orderId}`);
+
+/** change an ordinary order's price (a stop moves its trigger; a stop-limit moves both by the same amount) */
+export function modifyOrder(token: string, o: PlainOrder, newPrice: number) {
+  const isStop = /STOP_LOSS/.test(o.orderType);
+  const trigger = isStop ? newPrice : 0;
+  const price = o.orderType === 'STOP_LOSS' ? Math.round((newPrice + ((o.price ?? 0) - (o.triggerPrice ?? 0))) * 20) / 20 : isStop ? 0 : newPrice;
+  return req<{ orderId: string; orderStatus: string }>(token, 'PUT', `/orders/${o.orderId}`, {
+    dhanClientId: clientIdOf(token), orderId: o.orderId, orderType: o.orderType, legName: o.legName ?? '', quantity: o.remainingQuantity || o.quantity,
+    price, disclosedQuantity: o.disclosedQuantity ?? 0, triggerPrice: trigger, validity: o.validity ?? 'DAY',
+  });
+}
+
+/** move a super order's stop or target leg */
+export function modifySuperLeg(token: string, orderId: string, leg: 'STOP_LOSS_LEG' | 'TARGET_LEG', price: number) {
+  return req<{ orderId: string; orderStatus: string }>(token, 'PUT', `/super/orders/${orderId}`, leg === 'STOP_LOSS_LEG'
+    ? { dhanClientId: clientIdOf(token), orderId, legName: leg, stopLossPrice: price, trailingJump: 0 }
+    : { dhanClientId: clientIdOf(token), orderId, legName: leg, targetPrice: price });
 }
