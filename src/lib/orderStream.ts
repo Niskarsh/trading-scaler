@@ -53,7 +53,7 @@ function connect() {
   const token = shared.token;
   if (!token) return;
   const W = (globalThis as unknown as { WebSocket?: new (url: string) => WS }).WebSocket;
-  if (!W) { log('order stream: this Node has no built-in WebSocket (needs Node 22+): Add stop is off and Algo Live uses super orders'); return; }
+  if (!W) { log('order stream: this Node has no built-in WebSocket (needs Node 22+): stops / targets are managed by the 20 s check only'); return; }
   st.token = token;
   const ws = new W(URL);
   st.ws = ws;
@@ -76,6 +76,22 @@ function connect() {
     if (st.retry <= 1) log(`order stream: disconnected, reconnecting in ${wait / 1000} s`);
     st.timer = setTimeout(() => { st.timer = null; connect(); }, wait);
   };
+}
+
+/**
+ * The backstop that does not trust the stream: every 20 s in market hours, ONLY while a trade is managed here (a pair
+ * placed, or an Algo Live entry waiting for its pair), one sync straight from Dhan (two reads). Nothing at all otherwise.
+ */
+export function startBackstop() {
+  const g2 = globalThis as unknown as { __teBackstop?: ReturnType<typeof setInterval> };
+  if (g2.__teBackstop) return;
+  g2.__teBackstop = setInterval(() => {
+    const t = new Date(Date.now() + 19800_000), m = t.getUTCHours() * 60 + t.getUTCMinutes(), wd = t.getUTCDay();
+    if (wd === 0 || wd === 6 || m < 9 * 60 + 15 || m > 15 * 60 + 30) return;
+    if (!shared.token || (!shared.pairAt.size && !shared.pending.size)) return;
+    if (Date.now() - st.lastSync < 15_000) return; // the stream just did it
+    void sync();
+  }, 20_000);
 }
 
 /** called whenever tradereye sends a token: connects the first time, reconnects when the token changed */
