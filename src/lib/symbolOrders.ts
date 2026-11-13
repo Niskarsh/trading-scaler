@@ -1,5 +1,5 @@
 import { cancelLeg, cancelOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
-import { istNow, log, shared } from './te';
+import { istNow, log, markGone, shared } from './te';
 import { streamUp } from './orderStream';
 import { placePair } from './slmStops';
 
@@ -52,6 +52,8 @@ export function bookOf(securityId: string, { supers, plain, pos }: Loaded): Book
     if (OPEN.includes(o.orderStatus)) working.push({ id: `super:${o.orderId}:ENTRY_LEG`, role: 'entry', side: o.transactionType as 'BUY' | 'SELL', qty: o.quantity, price: o.price ?? 0, status: o.orderStatus, byBot: bot });
     for (const l of o.legDetails ?? []) {
       if (!OPEN.includes(l.orderStatus) || (l.legName !== 'STOP_LOSS_LEG' && l.legName !== 'TARGET_LEG')) continue;
+      // cancelled through here: Dhan can still list it as PENDING (13 Nov 2026), but it is gone
+      if (shared.goneLegs.has(`${o.orderId}:${l.legName}`)) continue;
       working.push({ id: `super:${o.orderId}:${l.legName}`, role: l.legName === 'STOP_LOSS_LEG' ? 'stop' : 'target', side: exit, qty: o.filledQty || o.quantity, price: l.price, status: l.orderStatus, byBot: bot });
     }
   }
@@ -74,7 +76,7 @@ export async function book(token: string, securityId: string): Promise<Book> {
 }
 
 /** a super order's leg (or entry) that can still fill */
-const liveLeg = (o: SuperOrder) => OPEN.includes(o.orderStatus) || (o.legDetails ?? []).some((l) => OPEN.includes(l.orderStatus) && l.legName !== 'ENTRY_LEG');
+const liveLeg = (o: SuperOrder) => OPEN.includes(o.orderStatus) || (o.legDetails ?? []).some((l) => OPEN.includes(l.orderStatus) && l.legName !== 'ENTRY_LEG' && !shared.goneLegs.has(`${o.orderId}:${l.legName}`));
 /** anything of this stock that could still fill */
 const anyLive = (x: Loaded) => x.supers.some(liveLeg) || x.all.length > 0;
 
@@ -84,8 +86,8 @@ async function cancelRound(token: string, x: Loaded): Promise<string[]> {
   for (const o of x.supers) {
     if (OPEN.includes(o.orderStatus)) { try { await cancelLeg(token, o.orderId, 'ENTRY_LEG'); } catch (e) { errors.push(`entry ${o.orderId}: ${(e as Error).message}`); } }
     for (const l of o.legDetails ?? []) {
-      if (!OPEN.includes(l.orderStatus) || (l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG')) continue;
-      try { await cancelLeg(token, o.orderId, l.legName); }
+      if (!OPEN.includes(l.orderStatus) || (l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG') || shared.goneLegs.has(`${o.orderId}:${l.legName}`)) continue;
+      try { await cancelLeg(token, o.orderId, l.legName); markGone(`${o.orderId}:${l.legName}`); }
       catch (e) {
         // a triggered leg already sits at the exchange as its own order: cancel that
         if (l.orderId) { try { await cancelOrder(token, String(l.orderId)); continue; } catch { /* reported below */ } }
@@ -211,8 +213,17 @@ export async function cancelOne(token: string, securityId: string, id: string) {
   const [kind, orderId, leg] = id.split(':');
   const { supers, plain } = await load(token, securityId);
   if (kind === 'super') {
-    if (!supers.some((o) => String(o.orderId) === orderId)) throw new Error('that order is not on this stock');
-    await cancelLeg(token, orderId, leg as 'ENTRY_LEG' | 'TARGET_LEG' | 'STOP_LOSS_LEG');
+    const so = supers.find((o) => String(o.orderId) === orderId);
+    if (!so) throw new Error('that order is not on this stock');
+    try { await cancelLeg(token, orderId, leg as 'ENTRY_LEG' | 'TARGET_LEG' | 'STOP_LOSS_LEG'); }
+    catch (e) {
+      // Dhan refuses to cancel a leg it still lists as PENDING when it is already cancelled (13 Nov 2026): it is gone.
+      // A TRIGGERED leg (at the exchange) is never treated so.
+      const l = (so.legDetails ?? []).find((x) => x.legName === leg);
+      if (!(l && l.orderStatus === 'PENDING' && /cancel/i.test((e as Error).message))) throw e;
+      log(`cancel ${id}: Dhan says it cannot be cancelled while listing it PENDING: it is no longer live, taken off the chart`);
+    }
+    markGone(`${orderId}:${leg}`);
   } else {
     const o = plain.find((x) => String(x.orderId) === orderId);
     if (!o) throw new Error('that order is not open on this stock any more');

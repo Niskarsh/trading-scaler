@@ -1,5 +1,5 @@
-import { cancelOrder, limitOrder, modifyOrder, orderList, positions, stopLimitOrder, type PlainOrder, type Position } from './dhanBot';
-import { istNow, log, shared } from './te';
+import { cancelLeg, cancelOrder, limitOrder, modifyOrder, orderList, positions, stopLimitOrder, superOrders, type PlainOrder, type Position } from './dhanBot';
+import { istNow, log, markGone, shared } from './te';
 
 /**
  * Stop / target PAIRS: a stop-limit at the exchange plus a target LIMIT, for
@@ -89,20 +89,30 @@ async function syncOnce(token: string): Promise<number> {
   }
 
   // every stock with a pair still working
-  const sids = new Set(ord.filter((x) => isOurStop(x) || isOurTarget(x)).map((x) => String(x.securityId)));
+  // (and every stock a pair was placed on, until cleaned up: when its stop or target FILLED nothing of ours is open
+  // any more, but an older super order's leg on that stock may still be)
+  const sids = new Set([...ord.filter((x) => isOurStop(x) || isOurTarget(x)).map((x) => String(x.securityId)), ...shared.pairAt.keys()]);
   for (const sid of sids) {
     if (shared.exiting.has(sid)) continue;
     const stops = ord.filter((x) => String(x.securityId) === sid && isOurStop(x));
     const tgts = ord.filter((x) => String(x.securityId) === sid && isOurTarget(x));
-    const exitSide = (stops[0] ?? tgts[0]).transactionType;
-    const p = posOf(sid, exitSide === 'BUY' ? -1 : 1);
+    const first = stops[0] ?? tgts[0];
+    const p = first ? posOf(sid, first.transactionType === 'BUY' ? -1 : 1) : pos.find((x: Position) => String(x.securityId) === sid && x.netQty);
     try {
       if (!p) {
         const age = Date.now() - (shared.pairAt.get(sid) ?? 0);
-        if (age < FRESH_MS) { again = Math.max(again, FRESH_MS - age + 500); continue; }
+        if (age < FRESH_MS && first) { again = Math.max(again, FRESH_MS - age + 500); continue; }
         // flat: one exit filled (or he closed it), so the other must go, or it could open a new position later
         const gone: string[] = [];
         for (const x of [...stops, ...tgts]) if (await once(`cancel:${x.orderId}`, `pair ${sid}: cancel ${x.orderId}`, () => cancelOrder(token, x.orderId))) gone.push(x.orderId);
+        // a super order's leg on the same stock (a pair added to an older super-order trade) must go too
+        for (const so of (await superOrders(token)).filter((x) => String(x.securityId) === sid)) {
+          for (const l of so.legDetails ?? []) {
+            const key = `${so.orderId}:${l.legName}`;
+            if (!OPEN.includes(l.orderStatus) || (l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG') || shared.goneLegs.has(key)) continue;
+            if (await once(`cancel:${key}`, `pair ${sid}: cancel super ${l.legName}`, () => cancelLeg(token, so.orderId, l.legName as 'TARGET_LEG' | 'STOP_LOSS_LEG'))) { markGone(key); gone.push(`super ${l.legName}`); }
+          }
+        }
         if (gone.length) log(`pair ${sid}: position closed, cancelled ${gone.join(' and ')}`);
         shared.slm.delete(sid); shared.pairAt.delete(sid);
         continue;
