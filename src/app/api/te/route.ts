@@ -20,8 +20,8 @@ export const dynamic = 'force-dynamic';
  *   clearall   { securityId }: cancel every working order (position left as it is)
  *   flatten    { securityId }: cancel every working order (waiting until they are gone), then close the position at
  *              market (never with a stop still live)
- *   addstop    { securityId, stop, target? }: an SL-M (and a target limit) for the open position when it has no stop,
- *              cancelling each other through the order stream (src/lib/orderStream.ts)
+ *   addstop    { securityId, stop?, target? }: for the open position, whichever of its stop (stop-limit) and target
+ *              (limit) is missing, as a pair cancelling each other through the order stream (src/lib/orderStream.ts)
  *   move       { securityId, id, price }: move a stop / target / limit (a dragged line, or break-even)
  *   cancel     { securityId, id }: cancel one order (the ✕ on its line)
  * The token is kept in memory only (for the 15:15 square-off), never written anywhere or logged.
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
         if (m.action === 'book') return NextResponse.json(await book(m.token, sid));
         if (m.action === 'clearall') return NextResponse.json(await clearAll(m.token, sid));
         if (m.action === 'flatten') return NextResponse.json(await flatten(m.token, sid));
-        if (m.action === 'addstop') return NextResponse.json(await addStop(m.token, sid, Number(m.stop), m.target ? Number(m.target) : undefined));
+        if (m.action === 'addstop') return NextResponse.json(await addStop(m.token, sid, m.stop ? Number(m.stop) : undefined, m.target ? Number(m.target) : undefined));
         if (!m.id) return NextResponse.json({ error: 'need an order id' }, { status: 400 });
         if (m.action === 'move') return NextResponse.json(await moveOrder(m.token, sid, m.id, Number(m.price)));
         return NextResponse.json(await cancelOne(m.token, sid, m.id));

@@ -1,111 +1,124 @@
-import { BOT_PREFIX, cancelLeg, cancelOrder, modifyOrder, orderList, positions, slmOrder, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
+import { cancelOrder, limitOrder, modifyOrder, orderList, positions, stopLimitOrder, type PlainOrder, type Position } from './dhanBot';
 import { istNow, log, shared } from './te';
 
 /**
- * Stops as real SL-M orders, and the one-cancels-the-other that goes with them. Runs only when Dhan's order stream says
- * an order changed (src/lib/orderStream.ts): no polling, so it costs REST calls only when something actually happens.
+ * Stop / target PAIRS: a stop-limit at the exchange plus a target LIMIT, for
+ *  - Algo Live trades: the entry is a plain market order; once it fills, its stop and target go in (placePair), and
+ *  - the Charts page's Add stop: a pair for a position already open.
+ * Dhan's API takes no stop without a limit price (13 Nov 2026: an SL-M with price 0 was refused, DH-906), so the stop's
+ * limit sits STOP_LIMIT_BUFFER_PCT (0.5%) past its trigger: once triggered it fills at the best price up to there.
+ * Dragging the stop line (or Break-even) moves trigger and limit together (dhanBot modifyOrder keeps the gap).
  *
- * 1. Algo Live trades: a super order's stop leg waits on Dhan's server and, when hit, goes out as a LIMIT that a fast move
- *    leaves behind (13 Nov 2026). So once a bot entry fills, its stop leg is swapped for an SL-M at the same price: it
- *    sits at the exchange and goes out as a market order when the price touches it. The target stays the super's leg.
- * 2. Add-stop pairs (the Charts page's Add stop): an SL-M plus a target LIMIT for a position already open.
+ * syncPairs runs when Dhan's order stream says an order changed (src/lib/orderStream.ts), one at a time:
+ *  - an Algo Live entry that filled gets its pair (placed once; whatever Dhan refuses is reported, not retried);
+ *  - position flat (stop or target filled, or closed by hand): what is left is cancelled (not in the first 15 s
+ *    after placing: the position list can lag; it looks again then);
+ *  - the stop / target quantity follows the open quantity (an entry still filling, a target filled in part).
  *
- * For both: position flat (stop or target filled, or closed by hand) -> cancel what is left; part of it closed -> the
- * SL-M / target quantity comes down to what is still open (never more than that, or it would open a position the other
- * way). An SL-M that could not be placed is tried again; one he cancels himself (✕ / Clear all) is not.
- * BOT_STOP=super keeps Algo Live's old super-order stop leg.
+ * Hard rules (13 Nov 2026, when a stop was cancelled before its replacement existed and a refused cancel looped):
+ *  - nothing here ever cancels or changes a stop while the position it protects is open, except to match its quantity;
+ *  - an order action Dhan refused is never retried by itself (`shared.failed`); the stream syncs at most every 3 s.
  */
 
 const OPEN = ['PENDING', 'TRANSIT', 'PART_TRADED', 'TRIGGERED'];
-const isOurSlm = (o: PlainOrder) => o.orderType === 'STOP_LOSS_MARKET' && (o.correlationId ?? '').startsWith('te-s') && OPEN.includes(o.orderStatus);
+const FRESH_MS = 15_000;
+export const BUFFER_PCT = () => Number(process.env.STOP_LIMIT_BUFFER_PCT ?? 0.5);
+const isOurStop = (o: PlainOrder) => /STOP_LOSS/.test(o.orderType) && (o.correlationId ?? '').startsWith('te-s') && OPEN.includes(o.orderStatus);
 const isOurTarget = (o: PlainOrder) => o.orderType === 'LIMIT' && (o.correlationId ?? '').startsWith('te-t') && OPEN.includes(o.orderStatus);
 const left = (o: PlainOrder) => o.remainingQuantity || o.quantity;
+const tick = (v: number) => Number((Math.round(v * 20) / 20).toFixed(2));
 
-/** keeps the open orders of one kind to `qty` in total: extras cancelled, the first cut down */
-async function capQty(token: string, sid: string, kind: string, list: PlainOrder[], qty: number) {
-  const total = list.reduce((a, x) => a + left(x), 0);
-  if (!list.length || total <= qty) return;
-  for (const x of list.slice(1)) await cancelOrder(token, x.orderId);
-  await modifyOrder(token, list[0], Number(kind === 'SL-M' ? list[0].triggerPrice : list[0].price), qty);
-  log(`${kind} ${sid}: quantity cut to ${qty} (part of the position closed)`);
+/** the limit of a stop-limit: BUFFER_PCT past the trigger, on the side that fills */
+export const stopLimitPrice = (trigger: number, side: 'BUY' | 'SELL') => {
+  const b = BUFFER_PCT() / 100;
+  return Number((side === 'BUY' ? Math.ceil((trigger * (1 + b)) / 0.05) * 0.05 : Math.floor((trigger * (1 - b)) / 0.05) * 0.05).toFixed(2));
+};
+
+/** runs an order action once: if Dhan refused it, it is logged and never tried again by itself */
+async function once(key: string, what: string, f: () => Promise<unknown>): Promise<boolean> {
+  if (shared.failed.has(key)) return false;
+  try { await f(); return true; }
+  catch (e) { shared.failed.add(key); log(`${what}: ${(e as Error).message} (not retried: act on it in Dhan or on the chart)`); return false; }
 }
 
-export async function syncSlmStops(token: string) {
-  const [sup, ord, pos] = await Promise.all([superOrders(token), orderList(token), positions(token)]);
-  const date = istNow().date.replace(/-/g, '');
-  const corr = (sid: string) => `te-s${date}-${sid}-${Date.now() % 10000}`.slice(0, 30);
-  const posOf = (sid: string, dir: number) => pos.find((x: Position) => String(x.securityId) === sid && x.netQty && Math.sign(x.netQty) === dir);
-  const handled = new Set<string>();
-
-  // 1. Algo Live trades
-  for (const o of sup as SuperOrder[]) {
-    if (!(o.correlationId ?? '').startsWith(BOT_PREFIX) || !((o.filledQty ?? 0) > 0 || o.orderStatus === 'TRADED')) continue;
-    const sid = String(o.securityId);
-    if (shared.exiting.has(sid) || handled.has(sid)) continue;
-    handled.add(sid);
-    const dir = o.transactionType === 'SELL' ? -1 : 1, exitSide: 'BUY' | 'SELL' = dir < 0 ? 'BUY' : 'SELL';
-    const p = posOf(sid, dir);
-    const leg = (o.legDetails ?? []).find((l) => l.legName === 'STOP_LOSS_LEG');
-    const tgt = (o.legDetails ?? []).find((l) => l.legName === 'TARGET_LEG' && OPEN.includes(l.orderStatus));
-    const mine = ord.filter((x) => String(x.securityId) === sid && isOurSlm(x));
-    // an Add-stop target on an Algo Live stock (after he removed its stop) goes with it
-    const tmine = ord.filter((x) => String(x.securityId) === sid && isOurTarget(x));
+/** places a stop and / or a target (whichever is given) closing `qty` of a position; returns what was placed and what Dhan refused */
+export async function placePair(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; stop?: number; target?: number; productType?: string; why: string }) {
+  const date = istNow().date.replace(/-/g, ''), sid = o.securityId, done: string[] = [], errors: string[] = [];
+  shared.pairAt.set(sid, Date.now());
+  if (o.stop) try {
+    const st = tick(o.stop), lim = stopLimitPrice(st, o.side);
+    await stopLimitOrder(token, { securityId: sid, side: o.side, qty: o.qty, trigger: st, price: lim, productType: o.productType, correlationId: `te-s${date}-${sid}-${Date.now() % 10000}`.slice(0, 30) });
+    done.push(`stop ${o.side} ${o.qty} at ${st} (fills up to ${lim})`);
+    shared.slm.set(sid, st);
+  } catch (e) { errors.push(`STOP NOT PLACED: ${(e as Error).message}. The position has no stop: add one on the chart or in Dhan`); }
+  if (o.target) {
     try {
-      if (!p) {
-        // flat: one exit filled (or he closed it), so the other must go, or it could open a new position later. Only
-        // once swapped: before that the super order does its own one-cancels-the-other
-        const swapped = shared.slm.has(sid) || leg?.orderStatus === 'CANCELLED';
-        if (!swapped || (!mine.length && !tmine.length && !tgt)) { shared.slm.delete(sid); continue; }
-        for (const x of [...mine, ...tmine]) await cancelOrder(token, x.orderId);
-        if (tgt) await cancelLeg(token, o.orderId, 'TARGET_LEG');
-        log(`SL-M ${sid}: position closed, cancelled ${[...mine.map((x) => `SL-M ${x.orderId}`), ...tmine.map((x) => `target ${x.orderId}`), ...(tgt ? ['the target leg'] : [])].join(' and ')}`);
-        shared.slm.delete(sid);
-        continue;
-      }
-      if (/^super$/i.test(process.env.BOT_STOP ?? '')) continue;
-      const qty = Math.abs(p.netQty);
-      await capQty(token, sid, 'target', tmine, qty);
-      if (leg && leg.orderStatus === 'PENDING' && !mine.length && shared.slm.get(sid) !== 0) {
-        // the swap: the leg goes first (two live stops could both fire and turn the position around), then the SL-M
-        await cancelLeg(token, o.orderId, 'STOP_LOSS_LEG');
-        shared.slm.set(sid, leg.price);
-        await slmOrder(token, { securityId: sid, side: exitSide, qty, trigger: leg.price, productType: p.productType, correlationId: corr(sid) });
-        log(`SL-M ${sid}: stop leg of ${o.orderId} swapped for an SL-M ${exitSide} ${qty} at ${leg.price}`);
-        continue;
-      }
-      const want = shared.slm.get(sid) ?? (leg?.orderStatus === 'CANCELLED' && tgt ? leg.price : undefined);
-      if (!mine.length) {
-        // placing failed last time (or the server restarted between the two steps): try again; 0 = he removed it
-        if (want) {
-          await slmOrder(token, { securityId: sid, side: exitSide, qty, trigger: want, productType: p.productType, correlationId: corr(sid) });
-          shared.slm.set(sid, want);
-          log(`SL-M ${sid}: placed ${exitSide} ${qty} at ${want} (retry)`);
-        }
-        continue;
-      }
-      shared.slm.set(sid, Number(mine[0].triggerPrice) || want || 0);
-      await capQty(token, sid, 'SL-M', mine, qty);
-    } catch (e) { log(`SL-M ${sid}: ${(e as Error).message}`); }
+      await limitOrder(token, { securityId: sid, side: o.side, qty: o.qty, price: tick(o.target), productType: o.productType, correlationId: `te-t${date}-${sid}-${Date.now() % 10000}`.slice(0, 30) });
+      done.push(`target ${o.side} ${o.qty} at ${tick(o.target)}`);
+    } catch (e) { errors.push(`target not placed: ${(e as Error).message}`); }
+  }
+  log(`pair ${sid} (${o.why}): ${done.join(', ') || 'nothing placed'}${errors.length ? ` · ${errors.join('; ')}` : ''}`);
+  return { done, errors };
+}
+
+/** keeps the open orders of one kind to exactly `qty` in total: extras cancelled, the first re-sized */
+async function fitQty(token: string, sid: string, kind: 'stop' | 'target', list: PlainOrder[], qty: number) {
+  const total = list.reduce((a, x) => a + left(x), 0);
+  if (!list.length || total === qty) return;
+  for (const x of list.slice(1)) await once(`cancel:${x.orderId}`, `${kind} ${sid}: cancel ${x.orderId}`, () => cancelOrder(token, x.orderId));
+  if (await once(`modify:${list[0].orderId}:${qty}`, `${kind} ${sid}: resize ${list[0].orderId} to ${qty}`, () => modifyOrder(token, list[0], Number(kind === 'stop' ? list[0].triggerPrice : list[0].price), qty)))
+    log(`${kind} ${sid}: quantity now ${qty} (the open position)`);
+}
+
+/** one look at the account; returns ms after which to look again (a fresh pair), or 0 */
+async function syncOnce(token: string): Promise<number> {
+  const [ord, pos] = await Promise.all([orderList(token), positions(token)]);
+  const posOf = (sid: string, dir: number) => pos.find((x: Position) => String(x.securityId) === sid && x.netQty && Math.sign(x.netQty) === dir);
+  let again = 0;
+
+  // Algo Live entries that filled: their pair goes in (once)
+  for (const [sid, w] of [...shared.pending]) {
+    const e = ord.find((x) => x.correlationId === w.correlationId);
+    if (!e) continue;
+    const filled = e.filledQty ?? (e.orderStatus === 'TRADED' ? e.quantity : 0);
+    if (!filled) { if (['REJECTED', 'CANCELLED', 'EXPIRED'].includes(e.orderStatus)) { shared.pending.delete(sid); log(`entry ${w.symbol}: ${e.orderStatus}${e.omsErrorDescription ? ` (${e.omsErrorDescription})` : ''}, no stop needed`); } continue; }
+    const p = posOf(sid, w.side === 'SELL' ? -1 : 1);
+    shared.pending.delete(sid); // before placing: a second sync must never place a second pair
+    await placePair(token, { securityId: sid, side: w.side === 'SELL' ? 'BUY' : 'SELL', qty: p ? Math.abs(p.netQty) : filled, stop: w.stop, target: w.target, productType: e.productType, why: `Algo Live ${w.symbol} entry filled ${filled}` });
+    again = Math.max(again, FRESH_MS);
   }
 
-  // 2. Add-stop pairs (any stock with our SL-M / target that is not an Algo Live trade)
-  const sids = new Set(ord.filter((x) => isOurSlm(x) || isOurTarget(x)).map((x) => String(x.securityId)));
+  // every stock with a pair still working
+  const sids = new Set(ord.filter((x) => isOurStop(x) || isOurTarget(x)).map((x) => String(x.securityId)));
   for (const sid of sids) {
-    if (handled.has(sid) || shared.exiting.has(sid)) continue;
-    const slms = ord.filter((x) => String(x.securityId) === sid && isOurSlm(x));
+    if (shared.exiting.has(sid)) continue;
+    const stops = ord.filter((x) => String(x.securityId) === sid && isOurStop(x));
     const tgts = ord.filter((x) => String(x.securityId) === sid && isOurTarget(x));
-    const exitSide = (slms[0] ?? tgts[0]).transactionType;
+    const exitSide = (stops[0] ?? tgts[0]).transactionType;
     const p = posOf(sid, exitSide === 'BUY' ? -1 : 1);
     try {
       if (!p) {
-        for (const x of [...slms, ...tgts]) await cancelOrder(token, x.orderId);
-        log(`stop pair ${sid}: position closed, cancelled ${[...slms.map((x) => `SL-M ${x.orderId}`), ...tgts.map((x) => `target ${x.orderId}`)].join(' and ')}`);
-        shared.slm.delete(sid);
+        const age = Date.now() - (shared.pairAt.get(sid) ?? 0);
+        if (age < FRESH_MS) { again = Math.max(again, FRESH_MS - age + 500); continue; }
+        // flat: one exit filled (or he closed it), so the other must go, or it could open a new position later
+        const gone: string[] = [];
+        for (const x of [...stops, ...tgts]) if (await once(`cancel:${x.orderId}`, `pair ${sid}: cancel ${x.orderId}`, () => cancelOrder(token, x.orderId))) gone.push(x.orderId);
+        if (gone.length) log(`pair ${sid}: position closed, cancelled ${gone.join(' and ')}`);
+        shared.slm.delete(sid); shared.pairAt.delete(sid);
         continue;
       }
       const qty = Math.abs(p.netQty);
-      await capQty(token, sid, 'SL-M', slms, qty);
-      await capQty(token, sid, 'target', tgts, qty);
-    } catch (e) { log(`stop pair ${sid}: ${(e as Error).message}`); }
+      await fitQty(token, sid, 'stop', stops, qty);
+      await fitQty(token, sid, 'target', tgts, qty);
+    } catch (e) { log(`pair ${sid}: ${(e as Error).message}`); }
   }
+  return again;
+}
+
+/** one sync at a time (the stream and a fresh Algo Live entry can both ask) */
+const g = globalThis as unknown as { __tePairs?: Promise<number> };
+export function syncPairs(token: string): Promise<number> {
+  const run = (g.__tePairs ?? Promise.resolve(0)).catch(() => 0).then(() => syncOnce(token));
+  g.__tePairs = run;
+  return run;
 }
