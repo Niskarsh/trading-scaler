@@ -1,6 +1,6 @@
 import { BOT_PREFIX, cancelLeg, cancelOrder, marketOrder, orderList, placeShort, positions, superOrders, type PlainOrder, type SuperOrder } from './dhanBot';
 import { exitNow } from './symbolOrders';
-import { streamUp, syncSoon } from './orderStream';
+import { syncSoon } from './orderStream';
 import { syncPairs } from './slmStops';
 import { istNow, log, shared } from './te';
 
@@ -14,9 +14,9 @@ import { istNow, log, shared } from './te';
  *
  * How a trade is placed (13 Nov 2026 on): a plain market entry; once it fills, its stop (a stop-limit at the exchange,
  * its limit STOP_LIMIT_BUFFER_PCT past the trigger) and target (a LIMIT) go in as a pair that cancel each other
- * (src/lib/slmStops.ts, driven by Dhan's order stream). A super order's stop leg goes out as a limit Dhan prices
- * itself, which a fast move left unfilled. If the order stream is not connected, it falls back to a super order
- * (nothing would place the pair or cancel the other one otherwise).
+ * (src/lib/slmStops.ts: looked at straight after the entry, on Dhan's order-stream messages, and every 20 s from Dhan
+ * directly while a trade is managed, so a dropped stream only slows it). A super order's stop leg goes out as a limit
+ * Dhan prices itself, which a fast move left unfilled. BOT_ORDERS=super goes back to super orders.
  */
 
 export const MAX_PER_DAY = Number(process.env.BOT_MAX_PER_DAY ?? 2);
@@ -40,7 +40,7 @@ export async function place(token: string, orders: BotOrder[]) {
   const [sup, ord] = await Promise.all([superOrders(token), orderList(token)]);
   const today: { correlationId?: string; orderId: string; orderStatus: string; filledQty?: number; omsErrorDescription?: string }[] = [...sup.filter(isBot), ...ord.filter(isBotEntry)];
   let used = today.filter(counts).length;
-  const pairs = streamUp() && !/^super$/i.test(process.env.BOT_ORDERS ?? '');
+  const pairs = !/^super$/i.test(process.env.BOT_ORDERS ?? '');
   for (const o of orders) {
     const r = { symbol: o.symbol, correlationId: o.correlationId };
     const dup = today.find((x) => x.correlationId === o.correlationId);

@@ -9,7 +9,8 @@ import { istNow, log, markGone, shared } from './te';
  * limit sits STOP_LIMIT_BUFFER_PCT (0.5%) past its trigger: once triggered it fills at the best price up to there.
  * Dragging the stop line (or Break-even) moves trigger and limit together (dhanBot modifyOrder keeps the gap).
  *
- * syncPairs runs when Dhan's order stream says an order changed (src/lib/orderStream.ts), one at a time:
+ * syncPairs runs (one at a time) when Dhan's order stream says an order changed, and every 20 s straight from Dhan while
+ * a trade is managed (src/lib/orderStream.ts), so a dropped stream never leaves a pair unmanaged:
  *  - an Algo Live entry that filled gets its pair (placed once; whatever Dhan refuses is reported, not retried);
  *  - position flat (stop or target filled, or closed by hand): what is left is cancelled (not in the first 15 s
  *    after placing: the position list can lag; it looks again then);
@@ -106,10 +107,11 @@ async function syncOnce(token: string): Promise<number> {
         const gone: string[] = [];
         for (const x of [...stops, ...tgts]) if (await once(`cancel:${x.orderId}`, `pair ${sid}: cancel ${x.orderId}`, () => cancelOrder(token, x.orderId))) gone.push(x.orderId);
         // a super order's leg on the same stock (a pair added to an older super-order trade) must go too
+        const finished = new Set(ord.filter((x) => ['CANCELLED', 'TRADED', 'REJECTED', 'EXPIRED', 'CLOSED'].includes(x.orderStatus)).map((x) => String(x.orderId)));
         for (const so of (await superOrders(token)).filter((x) => String(x.securityId) === sid)) {
           for (const l of so.legDetails ?? []) {
             const key = `${so.orderId}:${l.legName}`;
-            if (!OPEN.includes(l.orderStatus) || (l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG') || shared.goneLegs.has(key)) continue;
+            if (!OPEN.includes(l.orderStatus) || (l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG') || shared.goneLegs.has(key) || (l.orderId && finished.has(String(l.orderId)))) continue;
             if (await once(`cancel:${key}`, `pair ${sid}: cancel super ${l.legName}`, () => cancelLeg(token, so.orderId, l.legName as 'TARGET_LEG' | 'STOP_LOSS_LEG'))) { markGone(key); gone.push(`super ${l.legName}`); }
           }
         }

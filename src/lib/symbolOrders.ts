@@ -1,6 +1,5 @@
 import { cancelLeg, cancelOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
 import { istNow, log, markGone, shared } from './te';
-import { streamUp } from './orderStream';
 import { placePair } from './slmStops';
 
 /**
@@ -25,7 +24,14 @@ export interface Book {
   working: Working[];
 }
 
-export interface Loaded { supers: SuperOrder[]; plain: PlainOrder[]; all: PlainOrder[]; pos: Position[] }
+export interface Loaded { supers: SuperOrder[]; plain: PlainOrder[]; all: PlainOrder[]; pos: Position[]; finished: Set<string> }
+
+/** order-book statuses after which an order can never fill */
+const FINAL = ['CANCELLED', 'TRADED', 'REJECTED', 'EXPIRED', 'CLOSED'];
+/** is this super-order leg still live? Dhan's super-order list can keep a cancelled leg as PENDING (13 Nov 2026), so the
+ * order book (also Dhan's, read at the same moment) and this server's own record of cancels have the last word */
+const legLive = (o: SuperOrder, l: { legName: string; orderStatus: string; orderId?: string }, finished: Set<string>) =>
+  OPEN.includes(l.orderStatus) && !shared.goneLegs.has(`${o.orderId}:${l.legName}`) && !(l.orderId && finished.has(String(l.orderId)));
 
 /** one stock out of the account's lists */
 export function pick(securityId: string, sup: SuperOrder[], ord: PlainOrder[], pos: Position[]): Loaded {
@@ -36,7 +42,9 @@ export function pick(securityId: string, sup: SuperOrder[], ord: PlainOrder[], p
   const all = ord.filter((o) => String(o.securityId) === securityId && OPEN.includes(o.orderStatus));
   const plain = all.filter((o) => !superIds.has(String(o.orderId)));
   const p = pos.filter((x) => String(x.securityId) === securityId && x.netQty);
-  return { supers, plain, all, pos: p };
+  // the order book's finished orders: a super leg that is one of them is gone, whatever the super-order list says
+  const finished = new Set(ord.filter((o) => String(o.securityId) === securityId && FINAL.includes(o.orderStatus)).map((o) => String(o.orderId)));
+  return { supers, plain, all, pos: p, finished };
 }
 
 async function load(token: string, securityId: string): Promise<Loaded> {
@@ -44,16 +52,14 @@ async function load(token: string, securityId: string): Promise<Loaded> {
   return pick(securityId, sup, ord, pos);
 }
 
-export function bookOf(securityId: string, { supers, plain, pos }: Loaded): Book {
+export function bookOf(securityId: string, { supers, plain, pos, finished }: Loaded): Book {
   const working: Working[] = [];
   for (const o of supers) {
     const bot = (o.correlationId ?? '').startsWith('te-');
     const exit: 'BUY' | 'SELL' = o.transactionType === 'SELL' ? 'BUY' : 'SELL';
     if (OPEN.includes(o.orderStatus)) working.push({ id: `super:${o.orderId}:ENTRY_LEG`, role: 'entry', side: o.transactionType as 'BUY' | 'SELL', qty: o.quantity, price: o.price ?? 0, status: o.orderStatus, byBot: bot });
     for (const l of o.legDetails ?? []) {
-      if (!OPEN.includes(l.orderStatus) || (l.legName !== 'STOP_LOSS_LEG' && l.legName !== 'TARGET_LEG')) continue;
-      // cancelled through here: Dhan can still list it as PENDING (13 Nov 2026), but it is gone
-      if (shared.goneLegs.has(`${o.orderId}:${l.legName}`)) continue;
+      if ((l.legName !== 'STOP_LOSS_LEG' && l.legName !== 'TARGET_LEG') || !legLive(o, l, finished)) continue;
       working.push({ id: `super:${o.orderId}:${l.legName}`, role: l.legName === 'STOP_LOSS_LEG' ? 'stop' : 'target', side: exit, qty: o.filledQty || o.quantity, price: l.price, status: l.orderStatus, byBot: bot });
     }
   }
@@ -76,9 +82,9 @@ export async function book(token: string, securityId: string): Promise<Book> {
 }
 
 /** a super order's leg (or entry) that can still fill */
-const liveLeg = (o: SuperOrder) => OPEN.includes(o.orderStatus) || (o.legDetails ?? []).some((l) => OPEN.includes(l.orderStatus) && l.legName !== 'ENTRY_LEG' && !shared.goneLegs.has(`${o.orderId}:${l.legName}`));
+const liveLeg = (o: SuperOrder, finished: Set<string>) => OPEN.includes(o.orderStatus) || (o.legDetails ?? []).some((l) => l.legName !== 'ENTRY_LEG' && legLive(o, l, finished));
 /** anything of this stock that could still fill */
-const anyLive = (x: Loaded) => x.supers.some(liveLeg) || x.all.length > 0;
+const anyLive = (x: Loaded) => x.supers.some((o) => liveLeg(o, x.finished)) || x.all.length > 0;
 
 /** one round of cancels: super legs, and every open plain order of the stock (a triggered stop leg's exchange order too) */
 async function cancelRound(token: string, x: Loaded): Promise<string[]> {
@@ -86,7 +92,7 @@ async function cancelRound(token: string, x: Loaded): Promise<string[]> {
   for (const o of x.supers) {
     if (OPEN.includes(o.orderStatus)) { try { await cancelLeg(token, o.orderId, 'ENTRY_LEG'); } catch (e) { errors.push(`entry ${o.orderId}: ${(e as Error).message}`); } }
     for (const l of o.legDetails ?? []) {
-      if (!OPEN.includes(l.orderStatus) || (l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG') || shared.goneLegs.has(`${o.orderId}:${l.legName}`)) continue;
+      if ((l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG') || !legLive(o, l, x.finished)) continue;
       try { await cancelLeg(token, o.orderId, l.legName); markGone(`${o.orderId}:${l.legName}`); }
       catch (e) {
         // a triggered leg already sits at the exchange as its own order: cancel that
@@ -127,7 +133,7 @@ export async function exitNow(token: string, securityId: string, why: string): P
     const p = left.pos[0];
     if (!p) done.push('no open position');
     else if (anyLive(left)) {
-      const what = [...left.all.map((o) => `${o.orderType} ${o.transactionType} ${o.orderId} (${o.orderStatus})`), ...left.supers.filter(liveLeg).map((o) => `super ${o.orderId}`)].join(', ');
+      const what = [...left.all.map((o) => `${o.orderType} ${o.transactionType} ${o.orderId} (${o.orderStatus})`), ...left.supers.filter((o) => liveLeg(o, left.finished)).map((o) => `super ${o.orderId}`)].join(', ');
       errors.push(`could not cancel ${what}${cancelErrors.length ? `: ${cancelErrors.join('; ')}` : ''}. The position was NOT closed (an order left live could open a new one): close it in Dhan`);
     } else {
       const side: 'BUY' | 'SELL' = p.netQty < 0 ? 'BUY' : 'SELL', qty = Math.abs(p.netQty);
@@ -149,11 +155,10 @@ export async function exitNow(token: string, securityId: string, why: string): P
 /**
  * Add SL / Add TP: for the open position, a stop-limit at `stop` and / or a target LIMIT at `target` (whichever is
  * given: the Charts page and Algo Live page have one button each). Refused, with what is there, when the position
- * already has one of the kind asked for. Placed as a pair with whatever is there (src/lib/slmStops.ts). Refused when the
- * order stream is not connected (without it nothing would cancel the other one).
+ * already has one of the kind asked for: read from Dhan at the moment of the click (super orders, order book, positions).
+ * Placed as a pair with whatever is there (src/lib/slmStops.ts).
  */
 export async function addStop(token: string, securityId: string, stop?: number, target?: number) {
-  if (!streamUp()) throw new Error('the order stream to Dhan is not connected, so the stop and target could not cancel each other: not placed');
   const b = bookOf(securityId, await load(token, securityId));
   const p = b.position;
   if (!p) throw new Error('no open position on this stock');

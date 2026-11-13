@@ -7,6 +7,9 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   const { shared, istNow, log } = await import('./lib/te');
   const { squareOff } = await import('./lib/bot');
+  // stops / targets: a 20 s check straight from Dhan while a trade is managed (the order stream is only the fast path)
+  const { startBackstop } = await import('./lib/orderStream');
+  startBackstop();
   const g = globalThis as unknown as { __teTimer?: ReturnType<typeof setInterval> };
   if (g.__teTimer) return;
   g.__teTimer = setInterval(() => {
