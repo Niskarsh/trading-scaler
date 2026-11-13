@@ -1,4 +1,4 @@
-import { cancelLeg, cancelOrder, limitOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, slmOrder, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
+import { cancelLeg, cancelOrder, limitOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, stopLimitOrder, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
 import { istNow, log, shared } from './te';
 import { streamUp } from './orderStream';
 
@@ -144,8 +144,10 @@ export async function exitNow(token: string, securityId: string, why: string): P
 }
 
 /**
- * Add stop: for the open position, when it has no stop on the closing side, an SL-M at `stop` and (if given, and no
- * exit limit is there yet) a LIMIT at `target`, as a pair: the order stream (src/lib/orderStream.ts) cancels the
+ * Add stop: for the open position, when it has no stop on the closing side, a stop at `stop` and (if given, and no
+ * exit limit is there yet) a LIMIT at `target`, as a pair. Dhan's API takes no stop without a limit price (13 Nov 2026:
+ * an SL-M was refused with DH-906), so the stop is a stop-limit whose limit sits STOP_LIMIT_BUFFER_PCT (0.5%) past
+ * the trigger: once triggered it fills at the best price up to there. The pair: the order stream (src/lib/orderStream.ts) cancels the
  * other when one fills, and keeps their quantity to what is open. Refused when the order stream is not connected
  * (without it nothing would cancel the other one).
  */
@@ -161,8 +163,10 @@ export async function addStop(token: string, securityId: string, stop: number, t
   if (!(st > 0)) throw new Error('bad stop price');
   if (tg !== undefined && (dir > 0 ? !(tg > st) : !(tg < st))) throw new Error(`the target ${tg} is on the wrong side of the stop ${st}`);
   const date = istNow().date.replace(/-/g, '');
-  await slmOrder(token, { securityId, side, qty, trigger: st, productType: p.productType, correlationId: `te-s${date}-${securityId}-${Date.now() % 10000}`.slice(0, 30) });
-  const placed = [`SL-M ${side} ${qty} at ${st}`];
+  const buf = Number(process.env.STOP_LIMIT_BUFFER_PCT ?? 0.5) / 100;
+  const lim = side === 'BUY' ? Math.ceil((st * (1 + buf)) / 0.05) * 0.05 : Math.floor((st * (1 - buf)) / 0.05) * 0.05;
+  await stopLimitOrder(token, { securityId, side, qty, trigger: st, price: Number(lim.toFixed(2)), productType: p.productType, correlationId: `te-s${date}-${securityId}-${Date.now() % 10000}`.slice(0, 30) });
+  const placed = [`stop ${side} ${qty} at ${st} (limit ${lim.toFixed(2)})`];
   const errors: string[] = [];
   if (tg !== undefined && !b.working.some((w) => w.side === side && (w.role === 'target' || w.role === 'limit'))) {
     try {

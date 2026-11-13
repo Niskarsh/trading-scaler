@@ -23,13 +23,16 @@ interface Shared {
   token: string | null; tokenAt: number; seen: Map<string, number>; squaredOff: string | null; squaring: boolean; log: string[];
   /** securityIds being closed right now (Flatten, square-off): the SL-M sync leaves them alone meanwhile */
   exiting: Set<string>;
-  /** securityId -> the stop of an Algo Live trade whose super-order stop leg was swapped for an SL-M (src/lib/slmStops.ts); 0 = he removed it */
+  /** securityId -> the stop of an Add-stop pair (src/lib/slmStops.ts); 0 = he removed it */
   slm: Map<string, number>;
+  /** order actions Dhan refused once: never retried by themselves (no loops) */
+  failed: Set<string>;
 }
 const g = globalThis as unknown as { __te?: Shared };
-export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], exiting: new Set(), slm: new Map() });
+export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], exiting: new Set(), slm: new Map(), failed: new Set() });
 shared.exiting ??= new Set();
 shared.slm ??= new Map();
+shared.failed ??= new Set();
 
 export function log(msg: string) {
   const line = `${new Date().toISOString()} ${msg}`;

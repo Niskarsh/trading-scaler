@@ -99,10 +99,10 @@ export function limitOrder(token: string, o: { securityId: string; side: 'BUY' |
 }
 
 
-/** a stop-loss MARKET order (SL-M): sits at the exchange, and once the price touches the trigger it goes out as a market order */
-export function slmOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; trigger: number; correlationId: string; productType?: string }) {
+/** a stop-limit (SL): sits at the exchange; once the price touches the trigger it goes out as a limit at `price` (Dhan's API refuses an SL-M with no price: DH-906) */
+export function stopLimitOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; trigger: number; price: number; correlationId: string; productType?: string }) {
   return req<{ orderId: string; orderStatus: string }>(token, 'POST', '/orders', {
     dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: o.productType ?? 'INTRADAY',
-    orderType: 'STOP_LOSS_MARKET', validity: 'DAY', securityId: String(o.securityId), quantity: o.qty, disclosedQuantity: 0, price: 0, triggerPrice: o.trigger, afterMarketOrder: false,
+    orderType: 'STOP_LOSS', validity: 'DAY', securityId: String(o.securityId), quantity: o.qty, disclosedQuantity: 0, price: o.price, triggerPrice: o.trigger, afterMarketOrder: false,
   });
 }

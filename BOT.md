@@ -27,17 +27,16 @@ server's fixed IP.
   at market (never while a stop or target is still live: it says which); `move` moves a stop / target / limit (a
   dragged line, or Break-even); `cancel` cancels one order (the ✕ on its line); `addstop` (below). None of them opens
   a new position. Logic: `src/lib/symbolOrders.ts`.
-- **Algo Live stops are SL-M orders** (`src/lib/slmStops.ts`): once a bot entry fills, its super order's stop leg is
-  cancelled and an SL-M (`STOP_LOSS_MARKET`) at the same price takes its place at the exchange; when the price touches
-  it, it goes out as a market order. The target stays the super order's leg. `BOT_STOP=super` keeps the old stop leg.
-- **Add stop** (tradereye's Charts page, `addstop`): for an open position with no stop, an SL-M at Algo Live's stop and
-  a target LIMIT at its target, as a pair.
-- **One-cancels-the-other, from Dhan's order stream** (`src/lib/orderStream.ts`, `wss://api-order-update.dhan.co`):
-  no polling. Dhan pushes a message when any order changes; each one runs a sync (three reads): position flat, the
-  SL-M / target left over is cancelled; part closed, their quantity comes down to what is open; an SL-M that failed
-  to place is tried again (one you cancel yourself is not put back). The stream connects with the token tradereye last
-  sent and reconnects by itself. **Needs Node 22+** (built-in WebSocket): without it the swap never happens and Algo
-  Live keeps its super-order stop, and Add stop is refused. Check with `node -v`.
+- **Add stop** (tradereye's Charts page, `addstop`): for an open position with no stop, a stop and a target at Algo
+  Live's levels, as a pair. Dhan's API takes no stop without a limit price (an SL-M with price 0 is refused: DH-906),
+  so the stop is a stop-limit whose limit sits `STOP_LIMIT_BUFFER_PCT` (0.5%) past the trigger. Algo Live's own
+  orders are never touched: its super order keeps its stop leg.
+- **One-cancels-the-other for the pair, from Dhan's order stream** (`src/lib/orderStream.ts`,
+  `wss://api-order-update.dhan.co`): no polling. Order messages run a sync (two reads) at most once every 3 s:
+  position flat, the leftover stop / target is cancelled; part closed, their quantity comes down to what is open. An
+  action Dhan refuses is logged once and never retried by itself (13 Nov 2026: a refused cancel retried on its own
+  message and looped). Needs Node 22+ (built-in WebSocket); without it Add stop is refused. Check with `node -v`.
+- **Sandbox test**: `scripts/sandbox-test.mjs` runs these order calls against Dhan's sandbox (instructions inside).
 - **Everything else** (your existing pages and APIs) now asks for a password (HTTP Basic: user `UI_USER`, default
   `nik`, password `UI_PASSWORD`).
 
