@@ -41,14 +41,15 @@ async function once(key: string, what: string, f: () => Promise<unknown>): Promi
   catch (e) { shared.failed.add(key); log(`${what}: ${(e as Error).message} (not retried: act on it in Dhan or on the chart)`); return false; }
 }
 
-/** places a stop (and a target, if given) closing `qty` of a position; returns what was placed and what Dhan refused */
-export async function placePair(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; stop: number; target?: number; productType?: string; why: string }) {
-  const date = istNow().date.replace(/-/g, ''), sid = o.securityId;
-  const st = tick(o.stop), lim = stopLimitPrice(st, o.side), done: string[] = [], errors: string[] = [];
+/** places a stop and / or a target (whichever is given) closing `qty` of a position; returns what was placed and what Dhan refused */
+export async function placePair(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; stop?: number; target?: number; productType?: string; why: string }) {
+  const date = istNow().date.replace(/-/g, ''), sid = o.securityId, done: string[] = [], errors: string[] = [];
   shared.pairAt.set(sid, Date.now());
-  try {
+  if (o.stop) try {
+    const st = tick(o.stop), lim = stopLimitPrice(st, o.side);
     await stopLimitOrder(token, { securityId: sid, side: o.side, qty: o.qty, trigger: st, price: lim, productType: o.productType, correlationId: `te-s${date}-${sid}-${Date.now() % 10000}`.slice(0, 30) });
     done.push(`stop ${o.side} ${o.qty} at ${st} (fills up to ${lim})`);
+    shared.slm.set(sid, st);
   } catch (e) { errors.push(`STOP NOT PLACED: ${(e as Error).message}. The position has no stop: add one on the chart or in Dhan`); }
   if (o.target) {
     try {
@@ -56,7 +57,6 @@ export async function placePair(token: string, o: { securityId: string; side: 'B
       done.push(`target ${o.side} ${o.qty} at ${tick(o.target)}`);
     } catch (e) { errors.push(`target not placed: ${(e as Error).message}`); }
   }
-  shared.slm.set(sid, st);
   log(`pair ${sid} (${o.why}): ${done.join(', ') || 'nothing placed'}${errors.length ? ` · ${errors.join('; ')}` : ''}`);
   return { done, errors };
 }

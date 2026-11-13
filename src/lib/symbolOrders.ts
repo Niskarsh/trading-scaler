@@ -145,21 +145,26 @@ export async function exitNow(token: string, securityId: string, why: string): P
 }
 
 /**
- * Add stop: for the open position, when it has no stop on the closing side, a stop-limit at `stop` and (if given, and
- * no exit limit is there yet) a target LIMIT, as a pair (src/lib/slmStops.ts). Refused when the order stream is not
- * connected (without it nothing would cancel the other one when one fills).
+ * Add stop / target: for the open position, places whichever is MISSING on the closing side: a stop-limit at `stop`
+ * (when it has no stop) and a target LIMIT at `target` (when it has no target / exit limit). Both missing: both go in.
+ * Both there: refused. They are then a pair (src/lib/slmStops.ts: the other is cancelled when one fills). Refused when
+ * the order stream is not connected (without it nothing would cancel the other one).
  */
-export async function addStop(token: string, securityId: string, stop: number, target?: number) {
+export async function addStop(token: string, securityId: string, stop?: number, target?: number) {
   if (!streamUp()) throw new Error('the order stream to Dhan is not connected, so the stop and target could not cancel each other: not placed');
   const b = bookOf(securityId, await load(token, securityId));
   const p = b.position;
   if (!p) throw new Error('no open position on this stock');
   const side: 'BUY' | 'SELL' = p.netQty > 0 ? 'SELL' : 'BUY', dir = p.netQty > 0 ? 1 : -1;
-  if (b.working.some((w) => w.role === 'stop' && w.side === side)) throw new Error('this position already has a stop');
-  if (!(stop > 0)) throw new Error('bad stop price');
-  if (target && (dir > 0 ? !(target > stop) : !(target < stop))) throw new Error(`the target ${target} is on the wrong side of the stop ${stop}`);
-  const hasExit = b.working.some((w) => w.side === side && (w.role === 'target' || w.role === 'limit'));
-  const r = await placePair(token, { securityId, side, qty: Math.abs(p.netQty), stop, target: hasExit ? undefined : target, productType: p.productType, why: 'Add stop' });
+  const curStop = b.working.find((w) => w.role === 'stop' && w.side === side);
+  const curTarget = b.working.find((w) => w.side === side && (w.role === 'target' || w.role === 'limit'));
+  const wantStop = !curStop && stop && stop > 0 ? stop : undefined;
+  const wantTarget = !curTarget && target && target > 0 ? target : undefined;
+  if (!wantStop && !wantTarget) throw new Error(curStop && curTarget ? 'this position already has a stop and a target' : 'nothing to add (no price for the missing one)');
+  // the target must be on the profit side of the stop (the one placed now, or the one already there)
+  const s0 = wantStop ?? curStop?.price;
+  if (wantTarget && s0 && (dir > 0 ? !(wantTarget > s0) : !(wantTarget < s0))) throw new Error(`the target ${wantTarget} is on the wrong side of the stop ${s0}`);
+  const r = await placePair(token, { securityId, side, qty: Math.abs(p.netQty), stop: wantStop, target: wantTarget, productType: p.productType, why: 'Add stop / target' });
   await sleep(600);
   return { ...r, book: await book(token, securityId) };
 }
