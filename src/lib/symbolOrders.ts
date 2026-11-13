@@ -147,10 +147,10 @@ export async function exitNow(token: string, securityId: string, why: string): P
 }
 
 /**
- * Add stop / target: for the open position, places whichever is MISSING on the closing side: a stop-limit at `stop`
- * (when it has no stop) and a target LIMIT at `target` (when it has no target / exit limit). Both missing: both go in.
- * Both there: refused. They are then a pair (src/lib/slmStops.ts: the other is cancelled when one fills). Refused when
- * the order stream is not connected (without it nothing would cancel the other one).
+ * Add SL / Add TP: for the open position, a stop-limit at `stop` and / or a target LIMIT at `target` (whichever is
+ * given: the Charts page and Algo Live page have one button each). Refused, with what is there, when the position
+ * already has one of the kind asked for. Placed as a pair with whatever is there (src/lib/slmStops.ts). Refused when the
+ * order stream is not connected (without it nothing would cancel the other one).
  */
 export async function addStop(token: string, securityId: string, stop?: number, target?: number) {
   if (!streamUp()) throw new Error('the order stream to Dhan is not connected, so the stop and target could not cancel each other: not placed');
@@ -160,13 +160,16 @@ export async function addStop(token: string, securityId: string, stop?: number, 
   const side: 'BUY' | 'SELL' = p.netQty > 0 ? 'SELL' : 'BUY', dir = p.netQty > 0 ? 1 : -1;
   const curStop = b.working.find((w) => w.role === 'stop' && w.side === side);
   const curTarget = b.working.find((w) => w.side === side && (w.role === 'target' || w.role === 'limit'));
-  const wantStop = !curStop && stop && stop > 0 ? stop : undefined;
-  const wantTarget = !curTarget && target && target > 0 ? target : undefined;
-  if (!wantStop && !wantTarget) throw new Error(curStop && curTarget ? 'this position already has a stop and a target' : 'nothing to add (no price for the missing one)');
+  const what = (w: { id: string; price: number }) => `${w.id.startsWith('super:') ? 'a super-order leg' : 'an order'} at ${w.price}`;
+  const ifGone = 'if Dhan shows none, press ✕ on its line on the chart first';
+  const wantStop = stop && stop > 0 ? stop : undefined, wantTarget = target && target > 0 ? target : undefined;
+  if (!wantStop && !wantTarget) throw new Error('no price given');
+  if (wantStop && curStop) throw new Error(`this position already has a stop (${what(curStop)}): ${ifGone}`);
+  if (wantTarget && curTarget) throw new Error(`this position already has a target (${what(curTarget)}): ${ifGone}`);
   // the target must be on the profit side of the stop (the one placed now, or the one already there)
-  const s0 = wantStop ?? curStop?.price;
-  if (wantTarget && s0 && (dir > 0 ? !(wantTarget > s0) : !(wantTarget < s0))) throw new Error(`the target ${wantTarget} is on the wrong side of the stop ${s0}`);
-  const r = await placePair(token, { securityId, side, qty: Math.abs(p.netQty), stop: wantStop, target: wantTarget, productType: p.productType, why: 'Add stop / target' });
+  const s0 = wantStop ?? curStop?.price, t0 = wantTarget ?? curTarget?.price;
+  if (s0 && t0 && (dir > 0 ? !(t0 > s0) : !(t0 < s0))) throw new Error(`the target ${t0} is on the wrong side of the stop ${s0}`);
+  const r = await placePair(token, { securityId, side, qty: Math.abs(p.netQty), stop: wantStop, target: wantTarget, productType: p.productType, why: wantStop && wantTarget ? 'Add SL + TP' : wantStop ? 'Add SL' : 'Add TP' });
   await sleep(600);
   return { ...r, book: await book(token, securityId) };
 }
