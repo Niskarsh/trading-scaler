@@ -11,9 +11,9 @@ export const BOT_PREFIX = 'te-';
 
 export class DhanBotError extends Error { constructor(public status: number, message: string) { super(message); } }
 
-async function req<T>(token: string, method: string, path: string, body?: unknown): Promise<T> {
+async function req<T>(token: string, method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   const r = await fetch(`${BASE()}${path}`, {
-    method, headers: { 'access-token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
+    method, headers: { 'access-token': token, 'Content-Type': 'application/json', Accept: 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store',
   });
   const text = await r.text();
@@ -73,12 +73,12 @@ export const orderList = (token: string) => req<PlainOrder[]>(token, 'GET', '/or
 export const cancelOrder = (token: string, orderId: string) => req<unknown>(token, 'DELETE', `/orders/${orderId}`);
 
 /** change an ordinary order's price (a stop moves its trigger; a stop-limit moves both by the same amount) */
-export function modifyOrder(token: string, o: PlainOrder, newPrice: number) {
+export function modifyOrder(token: string, o: PlainOrder, newPrice: number, qty?: number) {
   const isStop = /STOP_LOSS/.test(o.orderType);
   const trigger = isStop ? newPrice : 0;
   const price = o.orderType === 'STOP_LOSS' ? Math.round((newPrice + ((o.price ?? 0) - (o.triggerPrice ?? 0))) * 20) / 20 : isStop ? 0 : newPrice;
   return req<{ orderId: string; orderStatus: string }>(token, 'PUT', `/orders/${o.orderId}`, {
-    dhanClientId: clientIdOf(token), orderId: o.orderId, orderType: o.orderType, legName: o.legName ?? '', quantity: o.remainingQuantity || o.quantity,
+    dhanClientId: clientIdOf(token), orderId: o.orderId, orderType: o.orderType, legName: o.legName ?? '', quantity: qty ?? (o.remainingQuantity || o.quantity),
     price, disclosedQuantity: o.disclosedQuantity ?? 0, triggerPrice: trigger, validity: o.validity ?? 'DAY',
   });
 }
@@ -88,4 +88,21 @@ export function modifySuperLeg(token: string, orderId: string, leg: 'STOP_LOSS_L
   return req<{ orderId: string; orderStatus: string }>(token, 'PUT', `/super/orders/${orderId}`, leg === 'STOP_LOSS_LEG'
     ? { dhanClientId: clientIdOf(token), orderId, legName: leg, stopLossPrice: price, trailingJump: 0 }
     : { dhanClientId: clientIdOf(token), orderId, legName: leg, targetPrice: price });
+}
+
+/** a plain LIMIT order (the target of an Add-stop pair) */
+export function limitOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; price: number; correlationId: string; productType?: string }) {
+  return req<{ orderId: string; orderStatus: string }>(token, 'POST', '/orders', {
+    dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: o.productType ?? 'INTRADAY',
+    orderType: 'LIMIT', validity: 'DAY', securityId: String(o.securityId), quantity: o.qty, disclosedQuantity: 0, price: o.price, triggerPrice: 0, afterMarketOrder: false,
+  });
+}
+
+
+/** a stop-loss MARKET order (SL-M): sits at the exchange, and once the price touches the trigger it goes out as a market order */
+export function slmOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; trigger: number; correlationId: string; productType?: string }) {
+  return req<{ orderId: string; orderStatus: string }>(token, 'POST', '/orders', {
+    dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: o.productType ?? 'INTRADAY',
+    orderType: 'STOP_LOSS_MARKET', validity: 'DAY', securityId: String(o.securityId), quantity: o.qty, disclosedQuantity: 0, price: 0, triggerPrice: o.trigger, afterMarketOrder: false,
+  });
 }

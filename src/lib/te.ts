@@ -19,9 +19,17 @@ export function openSealed<T>(secret: string, s: Sealed): T & { ts: number; nonc
 }
 
 /** state shared by the route and the 15:15 timer (one Node process under pm2; globalThis survives separate bundles) */
-interface Shared { token: string | null; tokenAt: number; seen: Map<string, number>; squaredOff: string | null; squaring: boolean; log: string[] }
+interface Shared {
+  token: string | null; tokenAt: number; seen: Map<string, number>; squaredOff: string | null; squaring: boolean; log: string[];
+  /** securityIds being closed right now (Flatten, square-off): the SL-M sync leaves them alone meanwhile */
+  exiting: Set<string>;
+  /** securityId -> the stop of an Algo Live trade whose super-order stop leg was swapped for an SL-M (src/lib/slmStops.ts); 0 = he removed it */
+  slm: Map<string, number>;
+}
 const g = globalThis as unknown as { __te?: Shared };
-export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [] });
+export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], exiting: new Set(), slm: new Map() });
+shared.exiting ??= new Set();
+shared.slm ??= new Map();
 
 export function log(msg: string) {
   const line = `${new Date().toISOString()} ${msg}`;

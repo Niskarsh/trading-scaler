@@ -1,4 +1,5 @@
-import { BOT_PREFIX, cancelLeg, marketOrder, placeShort, positions, superOrders, type SuperOrder } from './dhanBot';
+import { BOT_PREFIX, cancelLeg, placeShort, positions, superOrders, type SuperOrder } from './dhanBot';
+import { exitNow } from './symbolOrders';
 import { istNow, log, shared } from './te';
 
 /**
@@ -64,9 +65,10 @@ export async function status(token: string) {
 }
 
 /**
- * Closes every bot position: cancels entries not filled yet, cancels the stop and target of filled ones, checks they are
- * gone, then buys back what is still short at market. A position whose stop or target could not be cancelled is left
- * alone (buying it back would leave a live stop that could open a new position): it is reported instead.
+ * Closes every bot position: cancels entries not filled yet, cancels the stop and target of filled ones, then for each
+ * bot stock still open cancels every order of that stock (its SL-M and target included) and buys back, chasing the
+ * price (symbolOrders exitNow). A position whose orders could not be cancelled is left alone (buying it back would
+ * leave a live stop that could open a new position): it is reported instead.
  */
 export async function squareOff(token: string, why: string): Promise<{ done: string[]; errors: string[] }> {
   if (shared.squaring) return { done: [], errors: ['a square-off is already running'] };
@@ -84,18 +86,14 @@ export async function squareOff(token: string, why: string): Promise<{ done: str
       } catch (e) { errors.push(`${o.tradingSymbol}: ${(e as Error).message}`); }
     }
     await sleep(1500);
-    const again = (await superOrders(token)).filter(isBot);
-    const stuck = new Set(again.filter((o) => OPEN.includes(o.orderStatus) || (o.legDetails ?? []).some((l) => OPEN.includes(l.orderStatus))).map((o) => String(o.securityId)));
-    const ids = new Set(again.map((o) => String(o.securityId)));
-    const date = istNow().date.replace(/-/g, '');
+    // every bot stock still open: cancel its orders (target, SL-M) and close it, chasing the price (symbolOrders exitNow)
+    const ids = new Set(bot.map((o) => String(o.securityId)));
     for (const p of await positions(token)) {
       const id = String(p.securityId);
       if (!ids.has(id) || p.productType !== 'INTRADAY' || !p.netQty) continue;
-      if (stuck.has(id)) { errors.push(`${p.tradingSymbol}: its stop / target is still live, not closed (close it in Dhan)`); continue; }
-      try {
-        await marketOrder(token, { securityId: id, side: p.netQty < 0 ? 'BUY' : 'SELL', qty: Math.abs(p.netQty), correlationId: `te-x-${date}-${id}`.slice(0, 30) });
-        done.push(`${p.tradingSymbol ?? id} ${p.netQty < 0 ? 'bought back' : 'sold'} ${Math.abs(p.netQty)}`);
-      } catch (e) { errors.push(`${p.tradingSymbol}: ${(e as Error).message}`); }
+      const r = await exitNow(token, id, `square-off (${why})`);
+      done.push(...r.done.map((d) => `${p.tradingSymbol ?? id} ${d}`));
+      errors.push(...r.errors.map((e) => `${p.tradingSymbol ?? id}: ${e}`));
     }
     shared.squaredOff = new Date().toISOString();
     log(`square-off done: ${done.join(', ') || 'nothing open'}${errors.length ? ` · errors: ${errors.join('; ')}` : ''}`);

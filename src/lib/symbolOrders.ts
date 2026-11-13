@@ -1,13 +1,14 @@
-import { cancelLeg, cancelOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, superOrders, type PlainOrder, type SuperOrder } from './dhanBot';
-import { istNow, log } from './te';
+import { cancelLeg, cancelOrder, limitOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, slmOrder, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
+import { istNow, log, shared } from './te';
+import { streamUp } from './orderStream';
 
 /**
- * One stock's orders and position, for tradereye's chart buttons (Flatten, Clear all, Break-even, dragging an order line).
- * Unlike the bot's own square-off, these act on EVERY order of that one stock, the ones placed by hand included: they
- * only run when he presses a button on that stock's chart (and confirms). Nothing here places a new position.
+ * One stock's orders and position, for tradereye's chart buttons (Flatten, Clear all, Break-even, Add stop, dragging an
+ * order line). They act on EVERY order of that one stock, the ones placed by hand included, and only when he presses a
+ * button on that stock's chart. Only Add stop places new orders (a stop and target for the position already open).
  */
 
-const OPEN = ['PENDING', 'TRANSIT', 'PART_TRADED', 'TRIGGERED'];
+export const OPEN = ['PENDING', 'TRANSIT', 'PART_TRADED', 'TRIGGERED'];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** a working order as the chart draws it */
@@ -23,19 +24,26 @@ export interface Book {
   working: Working[];
 }
 
-async function load(token: string, securityId: string) {
-  const [sup, ord, pos] = await Promise.all([superOrders(token), orderList(token), positions(token)]);
+export interface Loaded { supers: SuperOrder[]; plain: PlainOrder[]; all: PlainOrder[]; pos: Position[] }
+
+/** one stock out of the account's lists */
+export function pick(securityId: string, sup: SuperOrder[], ord: PlainOrder[], pos: Position[]): Loaded {
   const supers = sup.filter((o) => String(o.securityId) === securityId);
-  // a super order's legs can also show up in the plain order list: they are handled through the super order
+  // a super order's legs can also show up in the plain order list: the chart handles them through the super order
   const superIds = new Set<string>();
   for (const o of supers) { superIds.add(String(o.orderId)); for (const l of o.legDetails ?? []) if (l.orderId) superIds.add(String(l.orderId)); }
-  const plain = ord.filter((o) => String(o.securityId) === securityId && !superIds.has(String(o.orderId)) && OPEN.includes(o.orderStatus));
+  const all = ord.filter((o) => String(o.securityId) === securityId && OPEN.includes(o.orderStatus));
+  const plain = all.filter((o) => !superIds.has(String(o.orderId)));
   const p = pos.filter((x) => String(x.securityId) === securityId && x.netQty);
-  return { supers, plain, pos: p };
+  return { supers, plain, all, pos: p };
 }
 
-export async function book(token: string, securityId: string): Promise<Book> {
-  const { supers, plain, pos } = await load(token, securityId);
+async function load(token: string, securityId: string): Promise<Loaded> {
+  const [sup, ord, pos] = await Promise.all([superOrders(token), orderList(token), positions(token)]);
+  return pick(securityId, sup, ord, pos);
+}
+
+export function bookOf(securityId: string, { supers, plain, pos }: Loaded): Book {
   const working: Working[] = [];
   for (const o of supers) {
     const bot = (o.correlationId ?? '').startsWith('te-');
@@ -48,7 +56,9 @@ export async function book(token: string, securityId: string): Promise<Book> {
   }
   for (const o of plain) {
     const stop = /STOP_LOSS/.test(o.orderType);
-    working.push({ id: `order:${o.orderId}`, role: stop ? 'stop' : 'limit', side: o.transactionType as 'BUY' | 'SELL', qty: o.remainingQuantity || o.quantity, price: (stop ? o.triggerPrice : o.price) ?? 0, status: o.orderStatus, byBot: (o.correlationId ?? '').startsWith('te-') });
+    // an Add-stop target (correlationId te-t…) draws as the TP it is
+    const target = !stop && (o.correlationId ?? '').startsWith('te-t');
+    working.push({ id: `order:${o.orderId}`, role: stop ? 'stop' : target ? 'target' : 'limit', side: o.transactionType as 'BUY' | 'SELL', qty: o.remainingQuantity || o.quantity, price: (stop ? o.triggerPrice : o.price) ?? 0, status: o.orderStatus, byBot: (o.correlationId ?? '').startsWith('te-') });
   }
   const p = pos[0] as (typeof pos)[number] & { buyAvg?: number; sellAvg?: number; costPrice?: number } | undefined;
   return {
@@ -58,53 +68,128 @@ export async function book(token: string, securityId: string): Promise<Book> {
   };
 }
 
-async function cancelEverything(token: string, supers: SuperOrder[], plain: PlainOrder[]): Promise<string[]> {
+export async function book(token: string, securityId: string): Promise<Book> {
+  return bookOf(securityId, await load(token, securityId));
+}
+
+/** a super order's leg (or entry) that can still fill */
+const liveLeg = (o: SuperOrder) => OPEN.includes(o.orderStatus) || (o.legDetails ?? []).some((l) => OPEN.includes(l.orderStatus) && l.legName !== 'ENTRY_LEG');
+/** anything of this stock that could still fill */
+const anyLive = (x: Loaded) => x.supers.some(liveLeg) || x.all.length > 0;
+
+/** one round of cancels: super legs, and every open plain order of the stock (a triggered stop leg's exchange order too) */
+async function cancelRound(token: string, x: Loaded): Promise<string[]> {
   const errors: string[] = [];
-  for (const o of supers) {
-    try {
-      if (OPEN.includes(o.orderStatus)) { await cancelLeg(token, o.orderId, 'ENTRY_LEG'); continue; }
-      for (const l of o.legDetails ?? []) if (OPEN.includes(l.orderStatus) && (l.legName === 'TARGET_LEG' || l.legName === 'STOP_LOSS_LEG')) {
-        try { await cancelLeg(token, o.orderId, l.legName); } catch (e) { errors.push(`${l.legName}: ${(e as Error).message}`); }
+  for (const o of x.supers) {
+    if (OPEN.includes(o.orderStatus)) { try { await cancelLeg(token, o.orderId, 'ENTRY_LEG'); } catch (e) { errors.push(`entry ${o.orderId}: ${(e as Error).message}`); } }
+    for (const l of o.legDetails ?? []) {
+      if (!OPEN.includes(l.orderStatus) || (l.legName !== 'TARGET_LEG' && l.legName !== 'STOP_LOSS_LEG')) continue;
+      try { await cancelLeg(token, o.orderId, l.legName); }
+      catch (e) {
+        // a triggered leg already sits at the exchange as its own order: cancel that
+        if (l.orderId) { try { await cancelOrder(token, String(l.orderId)); continue; } catch { /* reported below */ } }
+        errors.push(`${l.legName}: ${(e as Error).message}`);
       }
-    } catch (e) { errors.push(`super order ${o.orderId}: ${(e as Error).message}`); }
+    }
   }
-  for (const o of plain) { try { await cancelOrder(token, o.orderId); } catch (e) { errors.push(`order ${o.orderId}: ${(e as Error).message}`); } }
+  for (const o of x.all) { try { await cancelOrder(token, o.orderId); } catch (e) { errors.push(`order ${o.orderId}: ${(e as Error).message}`); } }
   return errors;
+}
+
+/**
+ * Cancels every working order of the stock and waits until Dhan shows none (up to ~8 s, cancelling again each round:
+ * Dhan takes a moment to show a cancel). Returns what is left and the last errors.
+ */
+async function cancelAll(token: string, securityId: string): Promise<{ left: Loaded; errors: string[] }> {
+  let x = await load(token, securityId), errors: string[] = [];
+  for (let round = 0; round < 4 && anyLive(x); round++) {
+    errors = await cancelRound(token, x);
+    for (let k = 0; k < 4; k++) { await sleep(500); x = await load(token, securityId); if (!anyLive(x)) break; }
+  }
+  return { left: x, errors: anyLive(x) ? errors : [] };
+}
+
+/**
+ * Closes the stock's position NOW: cancels every working order (and waits until Dhan shows them gone: a live stop /
+ * target left behind could open a new position the other way), then one market order for what is open. Dhan turns an
+ * API market order into a limit with market price protection; if it is still open a moment later, that is reported.
+ * Shared by Flatten and the 15:15 square-off.
+ */
+export async function exitNow(token: string, securityId: string, why: string): Promise<{ done: string[]; errors: string[] }> {
+  if (shared.exiting.has(securityId)) return { done: [], errors: ['already being closed'] };
+  shared.exiting.add(securityId);
+  const done: string[] = [], errors: string[] = [];
+  try {
+    const { left, errors: cancelErrors } = await cancelAll(token, securityId);
+    const p = left.pos[0];
+    if (!p) done.push('no open position');
+    else if (anyLive(left)) {
+      const what = [...left.all.map((o) => `${o.orderType} ${o.transactionType} ${o.orderId} (${o.orderStatus})`), ...left.supers.filter(liveLeg).map((o) => `super ${o.orderId}`)].join(', ');
+      errors.push(`could not cancel ${what}${cancelErrors.length ? `: ${cancelErrors.join('; ')}` : ''}. The position was NOT closed (an order left live could open a new one): close it in Dhan`);
+    } else {
+      const side: 'BUY' | 'SELL' = p.netQty < 0 ? 'BUY' : 'SELL', qty = Math.abs(p.netQty);
+      const correlationId = `tf-${istNow().date.replace(/-/g, '')}-${securityId}-${Date.now() % 1000}`.slice(0, 30);
+      try {
+        await marketOrder(token, { securityId, side, qty, productType: p.productType, correlationId });
+        await sleep(1500);
+        const still = (await positions(token)).find((x) => String(x.securityId) === securityId && x.netQty);
+        if (still) errors.push(`market ${side.toLowerCase()} sent, but ${Math.abs(still.netQty)} is still open (Dhan holds API market orders as a protected limit): check it in Dhan`);
+        else done.push(`${side === 'BUY' ? 'bought back' : 'sold'} ${qty} at market`);
+      } catch (e) { errors.push(`market order refused: ${(e as Error).message}`); }
+    }
+  } finally { shared.exiting.delete(securityId); }
+  shared.slm.delete(securityId);
+  log(`exit ${securityId} (${why}): ${done.join(', ') || 'nothing closed'}${errors.length ? ` · errors: ${errors.join('; ')}` : ''}`);
+  return { done, errors };
+}
+
+/**
+ * Add stop: for the open position, when it has no stop on the closing side, an SL-M at `stop` and (if given, and no
+ * exit limit is there yet) a LIMIT at `target`, as a pair: the order stream (src/lib/orderStream.ts) cancels the
+ * other when one fills, and keeps their quantity to what is open. Refused when the order stream is not connected
+ * (without it nothing would cancel the other one).
+ */
+export async function addStop(token: string, securityId: string, stop: number, target?: number) {
+  if (!streamUp()) throw new Error('the order stream to Dhan is not connected, so the stop and target could not cancel each other: not placed');
+  const x = await load(token, securityId);
+  const b = bookOf(securityId, x);
+  const p = b.position;
+  if (!p) throw new Error('no open position on this stock');
+  const side: 'BUY' | 'SELL' = p.netQty > 0 ? 'SELL' : 'BUY', qty = Math.abs(p.netQty), dir = p.netQty > 0 ? 1 : -1;
+  if (b.working.some((w) => w.role === 'stop' && w.side === side)) throw new Error('this position already has a stop');
+  const st = Math.round(stop * 20) / 20, tg = target ? Math.round(target * 20) / 20 : undefined;
+  if (!(st > 0)) throw new Error('bad stop price');
+  if (tg !== undefined && (dir > 0 ? !(tg > st) : !(tg < st))) throw new Error(`the target ${tg} is on the wrong side of the stop ${st}`);
+  const date = istNow().date.replace(/-/g, '');
+  await slmOrder(token, { securityId, side, qty, trigger: st, productType: p.productType, correlationId: `te-s${date}-${securityId}-${Date.now() % 10000}`.slice(0, 30) });
+  const placed = [`SL-M ${side} ${qty} at ${st}`];
+  const errors: string[] = [];
+  if (tg !== undefined && !b.working.some((w) => w.side === side && (w.role === 'target' || w.role === 'limit'))) {
+    try {
+      await limitOrder(token, { securityId, side, qty, price: tg, productType: p.productType, correlationId: `te-t${date}-${securityId}-${Date.now() % 10000}`.slice(0, 30) });
+      placed.push(`target ${side} ${qty} at ${tg}`);
+    } catch (e) { errors.push(`target not placed: ${(e as Error).message}`); }
+  }
+  shared.slm.set(securityId, st);
+  log(`add stop ${securityId}: ${placed.join(', ')}${errors.length ? ` · ${errors.join('; ')}` : ''}`);
+  await sleep(600);
+  return { done: placed, errors, book: await book(token, securityId) };
 }
 
 /** Clear all: cancel every working order of the stock (the position, if any, is left as it is) */
 export async function clearAll(token: string, securityId: string) {
-  const { supers, plain } = await load(token, securityId);
-  const errors = await cancelEverything(token, supers, plain);
-  log(`clear all ${securityId}: ${supers.length + plain.length} order(s)${errors.length ? ` · errors: ${errors.join('; ')}` : ''}`);
-  await sleep(800);
-  return { errors, book: await book(token, securityId) };
+  const { left, errors } = await cancelAll(token, securityId);
+  // he took the stop away himself: an Algo Live SL-M is not put back
+  if (shared.slm.has(securityId)) shared.slm.set(securityId, 0);
+  log(`clear all ${securityId}${errors.length ? ` · errors: ${errors.join('; ')}` : ''}`);
+  return { errors, book: bookOf(securityId, left) };
 }
 
-/**
- * Flatten: cancel every working order of the stock, check they are gone, then close the position at market. If a stop
- * or target is still live it does NOT close (the live stop could then open a new position the other way): it reports it.
- */
+/** Flatten: cancel every working order of the stock, wait until they are gone, then close the position at market */
 export async function flatten(token: string, securityId: string) {
-  const first = await load(token, securityId);
-  const errors = await cancelEverything(token, first.supers, first.plain);
-  await sleep(1500);
-  const again = await load(token, securityId);
-  const live = again.supers.some((o) => OPEN.includes(o.orderStatus) || (o.legDetails ?? []).some((l) => OPEN.includes(l.orderStatus) && l.legName !== 'ENTRY_LEG')) || again.plain.length > 0;
-  const done: string[] = [];
-  if (live) errors.push('a stop / target is still live, so the position was not closed: try again or close it in Dhan');
-  else {
-    const date = istNow().date.replace(/-/g, '');
-    for (const p of again.pos) {
-      try {
-        await marketOrder(token, { securityId, side: p.netQty < 0 ? 'BUY' : 'SELL', qty: Math.abs(p.netQty), productType: p.productType, correlationId: `tf-${date}-${securityId}-${Date.now() % 100000}`.slice(0, 30) });
-        done.push(`${p.netQty < 0 ? 'bought back' : 'sold'} ${Math.abs(p.netQty)} at market`);
-      } catch (e) { errors.push((e as Error).message); }
-    }
-  }
-  log(`flatten ${securityId}: ${done.join(', ') || 'nothing closed'}${errors.length ? ` · errors: ${errors.join('; ')}` : ''}`);
-  await sleep(800);
-  return { done, errors, book: await book(token, securityId) };
+  const r = await exitNow(token, securityId, 'Flatten');
+  await sleep(500);
+  return { ...r, book: await book(token, securityId) };
 }
 
 /** move one working order (a dragged line, or break-even) */
@@ -136,8 +221,10 @@ export async function cancelOne(token: string, securityId: string, id: string) {
     if (!supers.some((o) => String(o.orderId) === orderId)) throw new Error('that order is not on this stock');
     await cancelLeg(token, orderId, leg as 'ENTRY_LEG' | 'TARGET_LEG' | 'STOP_LOSS_LEG');
   } else {
-    if (!plain.some((o) => String(o.orderId) === orderId)) throw new Error('that order is not open on this stock any more');
+    const o = plain.find((x) => String(x.orderId) === orderId);
+    if (!o) throw new Error('that order is not open on this stock any more');
     await cancelOrder(token, orderId);
+    if (/STOP_LOSS/.test(o.orderType) && shared.slm.has(securityId)) shared.slm.set(securityId, 0); // he removed it: not put back
   }
   log(`cancel ${id} (${securityId})`);
   await sleep(600);

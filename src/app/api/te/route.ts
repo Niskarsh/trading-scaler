@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { accept, log, shared } from '@/lib/te';
 import { activateKillSwitch, killSwitchStatus } from '@/lib/dhanBot';
 import { MAX_PER_DAY, place, squareOff, status, type BotOrder } from '@/lib/bot';
-import { book, cancelOne, clearAll, flatten, moveOrder } from '@/lib/symbolOrders';
+import { addStop, book, cancelOne, clearAll, flatten, moveOrder } from '@/lib/symbolOrders';
+import { ensureStream } from '@/lib/orderStream';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,28 +18,33 @@ export const dynamic = 'force-dynamic';
  * One stock's orders, for tradereye's chart buttons (act on every order of that stock, hand-placed ones included):
  *   book       { securityId }: its position and working orders
  *   clearall   { securityId }: cancel every working order (position left as it is)
- *   flatten    { securityId }: cancel every working order, then close the position at market (never with a stop still live)
+ *   flatten    { securityId }: cancel every working order (waiting until they are gone), then close the position at
+ *              market (never with a stop still live)
+ *   addstop    { securityId, stop, target? }: an SL-M (and a target limit) for the open position when it has no stop,
+ *              cancelling each other through the order stream (src/lib/orderStream.ts)
  *   move       { securityId, id, price }: move a stop / target / limit (a dragged line, or break-even)
  *   cancel     { securityId, id }: cancel one order (the ✕ on its line)
  * The token is kept in memory only (for the 15:15 square-off), never written anywhere or logged.
  */
 export async function POST(req: Request) {
-  const m = accept<{ action: string; token: string; orders?: BotOrder[]; securityId?: string; id?: string; price?: number }>(await req.json().catch(() => null));
+  const m = accept<{ action: string; token: string; orders?: BotOrder[]; securityId?: string; id?: string; price?: number; stop?: number; target?: number }>(await req.json().catch(() => null));
   if (typeof m === 'string') { log(`refused a call: ${m}`); return NextResponse.json({ error: `refused: ${m}` }, { status: 401 }); }
   if (!m.token) return NextResponse.json({ error: 'no Dhan token' }, { status: 400 });
   shared.token = m.token; shared.tokenAt = Date.now();
+  ensureStream(); // Dhan's order stream (SL-M stops and their one-cancels-the-other)
   try {
     switch (m.action) {
       case 'ping': return NextResponse.json({ ok: true, now: Date.now(), maxPerDay: MAX_PER_DAY });
       case 'place': return NextResponse.json({ placed: await place(m.token, Array.isArray(m.orders) ? m.orders : []) });
       case 'status': return NextResponse.json(await status(m.token));
       case 'squareoff': return NextResponse.json(await squareOff(m.token, 'asked by tradereye'));
-      case 'book': case 'clearall': case 'flatten': case 'move': case 'cancel': {
+      case 'book': case 'clearall': case 'flatten': case 'move': case 'cancel': case 'addstop': {
         const sid = String(m.securityId ?? '');
         if (!/^\d{1,10}$/.test(sid)) return NextResponse.json({ error: 'need a securityId' }, { status: 400 });
         if (m.action === 'book') return NextResponse.json(await book(m.token, sid));
         if (m.action === 'clearall') return NextResponse.json(await clearAll(m.token, sid));
         if (m.action === 'flatten') return NextResponse.json(await flatten(m.token, sid));
+        if (m.action === 'addstop') return NextResponse.json(await addStop(m.token, sid, Number(m.stop), m.target ? Number(m.target) : undefined));
         if (!m.id) return NextResponse.json({ error: 'need an order id' }, { status: 400 });
         if (m.action === 'move') return NextResponse.json(await moveOrder(m.token, sid, m.id, Number(m.price)));
         return NextResponse.json(await cancelOne(m.token, sid, m.id));
