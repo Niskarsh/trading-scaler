@@ -11,9 +11,9 @@ export const BOT_PREFIX = 'te-';
 
 export class DhanBotError extends Error { constructor(public status: number, message: string) { super(message); } }
 
-async function req<T>(token: string, method: string, path: string, body?: unknown): Promise<T> {
+async function req<T>(token: string, method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   const r = await fetch(`${BASE()}${path}`, {
-    method, headers: { 'access-token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
+    method, headers: { 'access-token': token, 'Content-Type': 'application/json', Accept: 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store',
   });
   const text = await r.text();
@@ -88,4 +88,21 @@ export function modifySuperLeg(token: string, orderId: string, leg: 'STOP_LOSS_L
   return req<{ orderId: string; orderStatus: string }>(token, 'PUT', `/super/orders/${orderId}`, leg === 'STOP_LOSS_LEG'
     ? { dhanClientId: clientIdOf(token), orderId, legName: leg, stopLossPrice: price, trailingJump: 0 }
     : { dhanClientId: clientIdOf(token), orderId, legName: leg, targetPrice: price });
+}
+
+/** a plain LIMIT order (the stop guard's and Flatten's exit: a price through the market, so it fills at once at the best price) */
+export function limitOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; price: number; correlationId: string; productType?: string }) {
+  return req<{ orderId: string; orderStatus: string }>(token, 'POST', '/orders', {
+    dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: o.productType ?? 'INTRADAY',
+    orderType: 'LIMIT', validity: 'DAY', securityId: String(o.securityId), quantity: o.qty, disclosedQuantity: 0, price: o.price, triggerPrice: 0, afterMarketOrder: false,
+  });
+}
+
+/** last traded prices of NSE stocks (Dhan's market quote API: one call a second at most) */
+export async function ltps(token: string, securityIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!securityIds.length) return out;
+  const j = await req<{ data?: { NSE_EQ?: Record<string, { last_price?: number }> } }>(token, 'POST', '/marketfeed/ltp', { NSE_EQ: securityIds.map(Number) }, { 'client-id': clientIdOf(token) });
+  for (const [id, v] of Object.entries(j?.data?.NSE_EQ ?? {})) if (Number(v?.last_price) > 0) out.set(String(id), Number(v.last_price));
+  return out;
 }

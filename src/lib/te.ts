@@ -19,9 +19,19 @@ export function openSealed<T>(secret: string, s: Sealed): T & { ts: number; nonc
 }
 
 /** state shared by the route and the 15:15 timer (one Node process under pm2; globalThis survives separate bundles) */
-interface Shared { token: string | null; tokenAt: number; seen: Map<string, number>; squaredOff: string | null; squaring: boolean; log: string[] }
+/** the stop guard's memory of one stock's stop (src/lib/stopGuard.ts) */
+export interface GuardMem { stop: number; dir: 1 | -1; beyondSince: number | null }
+interface Shared {
+  token: string | null; tokenAt: number; seen: Map<string, number>; squaredOff: string | null; squaring: boolean; log: string[];
+  /** securityId -> the last stop seen on its open position */
+  guard: Map<string, GuardMem>;
+  /** securityIds being closed right now (Flatten or the stop guard): nothing else closes them meanwhile */
+  exiting: Set<string>;
+}
 const g = globalThis as unknown as { __te?: Shared };
-export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [] });
+export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], guard: new Map(), exiting: new Set() });
+shared.guard ??= new Map();
+shared.exiting ??= new Set();
 
 export function log(msg: string) {
   const line = `${new Date().toISOString()} ${msg}`;

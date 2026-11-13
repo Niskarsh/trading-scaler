@@ -17,7 +17,8 @@ export const dynamic = 'force-dynamic';
  * One stock's orders, for tradereye's chart buttons (act on every order of that stock, hand-placed ones included):
  *   book       { securityId }: its position and working orders
  *   clearall   { securityId }: cancel every working order (position left as it is)
- *   flatten    { securityId }: cancel every working order, then close the position at market (never with a stop still live)
+ *   flatten    { securityId }: cancel every working order (waiting until they are gone), then close the position with a
+ *              limit through the market, re-priced until flat (never with a stop still live)
  *   move       { securityId, id, price }: move a stop / target / limit (a dragged line, or break-even)
  *   cancel     { securityId, id }: cancel one order (the ✕ on its line)
  * The token is kept in memory only (for the 15:15 square-off), never written anywhere or logged.
