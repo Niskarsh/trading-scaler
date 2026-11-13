@@ -1,5 +1,6 @@
 import { ltps, orderList, positions, superOrders } from './dhanBot';
 import { exitNow, bookOf, pick } from './symbolOrders';
+import { syncSlmStops } from './slmStops';
 import { istNow, log, shared } from './te';
 
 /**
@@ -16,12 +17,15 @@ import { istNow, log, shared } from './te';
  *    wait), it closes it at market in effect (src/lib/symbolOrders.ts exitNow): cancels the stuck exit and every other
  *    working order of the stock, waits until they are gone, then a buy / sell priced EXIT_CHASE_PCT (2%) through the
  *    last price: it fills at once at the best prices there are, like a market order, re-priced until flat.
+ * Algo Live's own stops are SL-M orders (src/lib/slmStops.ts, swapped in each tick); for those the guard is only the
+ * backstop, if the SL-M has not closed the position SLM_GRACE_MS after the price passed it.
  * It uses the Dhan token tradereye last sent (the Charts page and Algo Live send it every few seconds). STOP_GUARD=off
  * turns it off.
  */
 
 const TICK = Number(process.env.GUARD_TICK_MS ?? 2000);
 const GRACE = Number(process.env.GUARD_GRACE_MS ?? 0);
+const SLM_GRACE = Number(process.env.SLM_GRACE_MS ?? 2500);
 let running = false, lastErr = '';
 
 /** past the stop: a long's price at / below it, a short's at / above it */
@@ -30,9 +34,16 @@ export const pastStop = (ltp: number, stop: number, dir: 1 | -1) => (dir > 0 ? l
 /** one look at every open position (exported for tests) */
 export async function guardTick(token: string, now = Date.now()) {
   const pos = (await positions(token)).filter((p) => p.netQty && (p.exchangeSegment ?? 'NSE_EQ') === 'NSE_EQ');
-  if (!pos.length) { shared.guard.clear(); return; }
+  if (!pos.length) {
+    shared.guard.clear();
+    // flat everywhere: an SL-M or target left after a trade closed must still be cancelled
+    if (shared.slm.size) await syncSlmStops(token, await superOrders(token), await orderList(token), []);
+    return;
+  }
   const ids = [...new Set(pos.map((p) => String(p.securityId)))];
   const [sup, ord, last] = await Promise.all([superOrders(token), orderList(token), ltps(token, ids)]);
+  // Algo Live's stops as SL-M orders, and their one-cancels-the-other (src/lib/slmStops.ts)
+  await syncSlmStops(token, sup, ord, pos);
   for (const id of [...shared.guard.keys()]) if (!ids.includes(id)) shared.guard.delete(id);
   for (const id of ids) {
     if (shared.exiting.has(id)) continue;
@@ -46,7 +57,9 @@ export async function guardTick(token: string, now = Date.now()) {
     if (stops.length) {
       // the stop hit first: a long's highest, a short's lowest
       const stop = dir > 0 ? Math.max(...stops) : Math.min(...stops);
+      const slm = ord.some((o) => String(o.securityId) === id && o.orderType === 'STOP_LOSS_MARKET' && o.transactionType === exitSide && ['PENDING', 'TRANSIT', 'TRIGGERED'].includes(o.orderStatus));
       if (!mem || mem.stop !== stop || mem.dir !== dir) { mem = { stop, dir, beyondSince: null }; shared.guard.set(id, mem); }
+      mem.slm = slm;
     } else if (mem && !(ltp && pastStop(ltp, mem.stop, mem.dir))) {
       // the stop is gone and price never got there: he removed it himself
       shared.guard.delete(id); continue;
@@ -54,7 +67,8 @@ export async function guardTick(token: string, now = Date.now()) {
     if (!mem || !ltp) continue;
     if (!pastStop(ltp, mem.stop, mem.dir)) { mem.beyondSince = null; continue; }
     if (mem.beyondSince === null) mem.beyondSince = now;
-    if (now - mem.beyondSince < GRACE) continue;
+    // an SL-M is a market order at the exchange: it gets SLM_GRACE_MS (2.5 s) to fill by itself before the guard steps in
+    if (now - mem.beyondSince < (mem.slm ? SLM_GRACE : GRACE)) continue;
     log(`stop guard: ${id} ${dir > 0 ? 'long' : 'short'} ${Math.abs(p.netQty)}, price ${ltp} past its stop ${mem.stop} for ${Math.round((now - mem.beyondSince) / 1000)} s and still open: closing it`);
     // not awaited: one stuck stock must not hold up the others
     void exitNow(token, id, `stop ${mem.stop} hit, price ${ltp}`).catch((e) => log(`stop guard exit ${id} failed: ${(e as Error).message}`));

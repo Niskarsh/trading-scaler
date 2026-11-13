@@ -161,8 +161,9 @@ export async function exitNow(token: string, securityId: string, why: string): P
 /** Clear all: cancel every working order of the stock (the position, if any, is left as it is) */
 export async function clearAll(token: string, securityId: string) {
   const { left, errors } = await cancelAll(token, securityId);
-  // he took the stop away himself: the stop guard forgets it
+  // he took the stop away himself: the stop guard forgets it, and an Algo Live SL-M is not put back
   shared.guard.delete(securityId);
+  if (shared.slm.has(securityId)) shared.slm.set(securityId, 0);
   log(`clear all ${securityId}${errors.length ? ` · errors: ${errors.join('; ')}` : ''}`);
   return { errors, book: bookOf(securityId, left) };
 }
@@ -209,7 +210,7 @@ export async function cancelOne(token: string, securityId: string, id: string) {
     const o = plain.find((x) => String(x.orderId) === orderId);
     if (!o) throw new Error('that order is not open on this stock any more');
     await cancelOrder(token, orderId);
-    if (/STOP_LOSS/.test(o.orderType)) shared.guard.delete(securityId);
+    if (/STOP_LOSS/.test(o.orderType)) { shared.guard.delete(securityId); if (shared.slm.has(securityId)) shared.slm.set(securityId, 0); }
   }
   log(`cancel ${id} (${securityId})`);
   await sleep(600);

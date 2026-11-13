@@ -26,7 +26,13 @@ server's fixed IP.
   `flatten` cancels them, waits until Dhan shows them gone (cancelling again if needed), then closes the position
   with a limit through the market, re-priced until flat (never while a stop or target is still live: it says which); `move` moves a stop / target / limit (a dragged line, or Break-even); `cancel`
   cancels one order (the ✕ on its line). None of them opens a new position. Logic: `src/lib/symbolOrders.ts`.
-- **Stop guard** (`src/lib/stopGuard.ts`): since March 2026 Dhan sends no API order as a pure market order. A triggered
+- **Algo Live stops are SL-M orders** (`src/lib/slmStops.ts`): once a bot entry fills, its super order's stop leg is
+  cancelled and an SL-M (`STOP_LOSS_MARKET`) at the same price takes its place, sitting at the exchange; when the
+  price touches it, it goes out as a market order. The target stays the super order's leg. This server does the
+  one-cancels-the-other: when the position is flat (SL-M or target filled), what is left is cancelled; when the target
+  part-fills, the SL-M's quantity comes down to what is still open. An SL-M you cancel yourself (✕ / Clear all) is not
+  put back. `BOT_STOP=super` keeps the old super-order stop leg. The 15:15 square-off cancels the SL-M and target too.
+- **Stop guard** (`src/lib/stopGuard.ts`, the backstop; for an SL-M it waits `SLM_GRACE_MS`, 2500, first): since March 2026 Dhan sends no API order as a pure market order. A triggered
   stop (a super order's stop leg, or an SL order) goes out as a LIMIT, and in a fast move it is left behind unfilled
   while the loss grows. Every 2 s in market hours this server reads every open NSE position, remembers its stop (it
   follows a dragged or break-even stop), and the moment the last price is past the stop with the position still

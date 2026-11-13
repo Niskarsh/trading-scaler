@@ -73,12 +73,12 @@ export const orderList = (token: string) => req<PlainOrder[]>(token, 'GET', '/or
 export const cancelOrder = (token: string, orderId: string) => req<unknown>(token, 'DELETE', `/orders/${orderId}`);
 
 /** change an ordinary order's price (a stop moves its trigger; a stop-limit moves both by the same amount) */
-export function modifyOrder(token: string, o: PlainOrder, newPrice: number) {
+export function modifyOrder(token: string, o: PlainOrder, newPrice: number, qty?: number) {
   const isStop = /STOP_LOSS/.test(o.orderType);
   const trigger = isStop ? newPrice : 0;
   const price = o.orderType === 'STOP_LOSS' ? Math.round((newPrice + ((o.price ?? 0) - (o.triggerPrice ?? 0))) * 20) / 20 : isStop ? 0 : newPrice;
   return req<{ orderId: string; orderStatus: string }>(token, 'PUT', `/orders/${o.orderId}`, {
-    dhanClientId: clientIdOf(token), orderId: o.orderId, orderType: o.orderType, legName: o.legName ?? '', quantity: o.remainingQuantity || o.quantity,
+    dhanClientId: clientIdOf(token), orderId: o.orderId, orderType: o.orderType, legName: o.legName ?? '', quantity: qty ?? (o.remainingQuantity || o.quantity),
     price, disclosedQuantity: o.disclosedQuantity ?? 0, triggerPrice: trigger, validity: o.validity ?? 'DAY',
   });
 }
@@ -105,4 +105,12 @@ export async function ltps(token: string, securityIds: string[]): Promise<Map<st
   const j = await req<{ data?: { NSE_EQ?: Record<string, { last_price?: number }> } }>(token, 'POST', '/marketfeed/ltp', { NSE_EQ: securityIds.map(Number) }, { 'client-id': clientIdOf(token) });
   for (const [id, v] of Object.entries(j?.data?.NSE_EQ ?? {})) if (Number(v?.last_price) > 0) out.set(String(id), Number(v.last_price));
   return out;
+}
+
+/** a stop-loss MARKET order (SL-M): sits at the exchange, and once the price touches the trigger it goes out as a market order */
+export function slmOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; trigger: number; correlationId: string; productType?: string }) {
+  return req<{ orderId: string; orderStatus: string }>(token, 'POST', '/orders', {
+    dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: o.productType ?? 'INTRADAY',
+    orderType: 'STOP_LOSS_MARKET', validity: 'DAY', securityId: String(o.securityId), quantity: o.qty, disclosedQuantity: 0, price: 0, triggerPrice: o.trigger, afterMarketOrder: false,
+  });
 }
