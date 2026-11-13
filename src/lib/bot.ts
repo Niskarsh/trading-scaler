@@ -1,5 +1,7 @@
-import { BOT_PREFIX, cancelLeg, placeShort, positions, superOrders, type SuperOrder } from './dhanBot';
+import { BOT_PREFIX, cancelLeg, cancelOrder, marketOrder, orderList, placeShort, positions, superOrders, type PlainOrder, type SuperOrder } from './dhanBot';
 import { exitNow } from './symbolOrders';
+import { streamUp, syncSoon } from './orderStream';
+import { syncPairs } from './slmStops';
 import { istNow, log, shared } from './te';
 
 /**
@@ -9,6 +11,12 @@ import { istNow, log, shared } from './te';
  *  - only between BOT_FROM (09:30) and BOT_TO (11:05) IST, only shorts, only INTRADAY, each position at most
  *    BOT_MAX_NOTIONAL (₹75,000) of stock;
  *  - whatever is still open at 15:15 is closed (src/instrumentation.ts), and on demand.
+ *
+ * How a trade is placed (13 Nov 2026 on): a plain market entry; once it fills, its stop (a stop-limit at the exchange,
+ * its limit STOP_LIMIT_BUFFER_PCT past the trigger) and target (a LIMIT) go in as a pair that cancel each other
+ * (src/lib/slmStops.ts, driven by Dhan's order stream). A super order's stop leg goes out as a limit Dhan prices
+ * itself, which a fast move left unfilled. If the order stream is not connected, it falls back to a super order
+ * (nothing would place the pair or cancel the other one otherwise).
  */
 
 export const MAX_PER_DAY = Number(process.env.BOT_MAX_PER_DAY ?? 2);
@@ -21,14 +29,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export interface BotOrder { symbol: string; securityId: string; qty: number; targetPrice: number; stopLossPrice: number; correlationId: string }
 
 const isBot = (o: SuperOrder) => (o.correlationId ?? '').startsWith(BOT_PREFIX);
-const counts = (o: SuperOrder) => !['REJECTED', 'CANCELLED'].includes(o.orderStatus) || (o.filledQty ?? 0) > 0;
+const counts = (o: { orderStatus: string; filledQty?: number }) => !['REJECTED', 'CANCELLED'].includes(o.orderStatus) || (o.filledQty ?? 0) > 0;
+/** a bot entry placed as a plain order (te-<date>-<symbol>; te-s / te-t are its stop and target) */
+const isBotEntry = (o: PlainOrder) => /^te-\d{8}-/.test(o.correlationId ?? '');
 
 export async function place(token: string, orders: BotOrder[]) {
   const now = istNow();
   const placed: { symbol: string; correlationId: string; orderId?: string; orderStatus?: string; error?: string }[] = [];
   if (now.min < FROM || now.min > TO) return orders.map((o) => ({ symbol: o.symbol, correlationId: o.correlationId, error: `outside the bot's hours (${process.env.BOT_FROM ?? '09:30'}-${process.env.BOT_TO ?? '11:05'} IST)` }));
-  const today = (await superOrders(token)).filter(isBot);
+  const [sup, ord] = await Promise.all([superOrders(token), orderList(token)]);
+  const today: { correlationId?: string; orderId: string; orderStatus: string; filledQty?: number; omsErrorDescription?: string }[] = [...sup.filter(isBot), ...ord.filter(isBotEntry)];
   let used = today.filter(counts).length;
+  const pairs = streamUp() && !/^super$/i.test(process.env.BOT_ORDERS ?? '');
   for (const o of orders) {
     const r = { symbol: o.symbol, correlationId: o.correlationId };
     const dup = today.find((x) => x.correlationId === o.correlationId);
@@ -38,11 +50,23 @@ export async function place(token: string, orders: BotOrder[]) {
     if (o.qty * o.stopLossPrice > MAX_NOTIONAL) { placed.push({ ...r, error: `position ₹${Math.round(o.qty * o.stopLossPrice)} is above BOT_MAX_NOTIONAL ₹${MAX_NOTIONAL}` }); continue; }
     if (used >= MAX_PER_DAY) { placed.push({ ...r, error: `the day's ${MAX_PER_DAY} bot orders are taken` }); continue; }
     try {
-      const x = await placeShort(token, o);
+      let x: { orderId: string; orderStatus: string };
+      if (pairs) {
+        // the stop and target wait for the fill (src/lib/slmStops.ts); registered BEFORE the order goes out
+        shared.pending.set(String(o.securityId), { correlationId: o.correlationId, symbol: o.symbol, side: 'SELL', stop: o.stopLossPrice, target: o.targetPrice });
+        x = await marketOrder(token, { securityId: o.securityId, side: 'SELL', qty: o.qty, correlationId: o.correlationId });
+        syncSoon();
+        // a market entry normally fills at once: look straight away rather than wait for the stream
+        setTimeout(() => { void syncPairs(token).catch(() => 0); }, 1500);
+      } else {
+        x = await placeShort(token, o);
+        log(`(order stream not connected: ${o.symbol} placed as a super order)`);
+      }
       used++;
       log(`placed ${o.symbol} short ${o.qty} stop ${o.stopLossPrice} target ${o.targetPrice} -> ${x.orderId} ${x.orderStatus}`);
       placed.push({ ...r, orderId: x.orderId, orderStatus: x.orderStatus, error: x.orderStatus === 'REJECTED' ? 'rejected by Dhan' : undefined });
     } catch (e) {
+      shared.pending.delete(String(o.securityId));
       log(`place ${o.symbol} failed: ${(e as Error).message}`);
       placed.push({ ...r, error: (e as Error).message });
     }
@@ -51,14 +75,23 @@ export async function place(token: string, orders: BotOrder[]) {
 }
 
 export async function status(token: string) {
-  const [list, pos] = await Promise.all([superOrders(token), positions(token)]);
-  const bot = list.filter(isBot);
-  const ids = new Set(bot.map((o) => String(o.securityId)));
+  const [list, ord, pos] = await Promise.all([superOrders(token), orderList(token), positions(token)]);
+  const bot = list.filter(isBot), plain = ord.filter(isBotEntry);
+  const ids = new Set([...bot, ...plain].map((o) => String(o.securityId)));
+  // a plain entry's stop / target: its te-s / te-t orders on that stock, shown as the legs a super order would have
+  const legsOf = (sid: string) => ord.filter((x) => String(x.securityId) === sid && /^te-[st]\d/.test(x.correlationId ?? ''))
+    .map((x) => ({ legName: (x.correlationId ?? '').startsWith('te-s') ? 'STOP_LOSS_LEG' : 'TARGET_LEG', orderStatus: x.orderStatus, price: Number((x.correlationId ?? '').startsWith('te-s') ? x.triggerPrice : x.price) || 0 }));
   return {
-    orders: bot.map((o) => ({
-      orderId: o.orderId, correlationId: o.correlationId ?? '', symbol: o.tradingSymbol ?? '', orderStatus: o.orderStatus, qty: o.quantity, filledQty: o.filledQty ?? 0,
-      avgPrice: o.averageTradedPrice ?? 0, legs: (o.legDetails ?? []).map((l) => ({ legName: l.legName, orderStatus: l.orderStatus, price: l.price })), error: o.orderStatus === 'REJECTED' ? o.omsErrorDescription : undefined,
-    })),
+    orders: [
+      ...bot.map((o) => ({
+        orderId: o.orderId, correlationId: o.correlationId ?? '', symbol: o.tradingSymbol ?? '', orderStatus: o.orderStatus, qty: o.quantity, filledQty: o.filledQty ?? 0,
+        avgPrice: o.averageTradedPrice ?? 0, legs: (o.legDetails ?? []).map((l) => ({ legName: l.legName, orderStatus: l.orderStatus, price: l.price })), error: o.orderStatus === 'REJECTED' ? o.omsErrorDescription : undefined,
+      })),
+      ...plain.map((o) => ({
+        orderId: o.orderId, correlationId: o.correlationId ?? '', symbol: o.tradingSymbol ?? '', orderStatus: o.orderStatus, qty: o.quantity, filledQty: o.filledQty ?? 0,
+        avgPrice: o.averageTradedPrice ?? 0, legs: legsOf(String(o.securityId)), error: o.orderStatus === 'REJECTED' ? o.omsErrorDescription : undefined,
+      })),
+    ],
     positions: pos.filter((p) => ids.has(String(p.securityId)) && p.productType === 'INTRADAY').map((p) => ({ symbol: p.tradingSymbol ?? '', securityId: String(p.securityId), netQty: p.netQty, realized: p.realizedProfit ?? 0, unrealized: p.unrealizedProfit ?? 0 })),
     squaredOffAt: shared.squaredOff, maxPerDay: MAX_PER_DAY,
   };
@@ -77,6 +110,9 @@ export async function squareOff(token: string, why: string): Promise<{ done: str
   try {
     log(`square-off (${why})`);
     const bot = (await superOrders(token)).filter(isBot);
+    // plain Algo Live entries (te-<date>-…): one not filled yet is cancelled, a filled one's stock is closed below
+    const plain = (await orderList(token)).filter(isBotEntry);
+    for (const o of plain) if (OPEN.includes(o.orderStatus)) { try { await cancelOrder(token, o.orderId); } catch (e) { errors.push(`${o.tradingSymbol} entry: ${(e as Error).message}`); } }
     for (const o of bot) {
       try {
         if (OPEN.includes(o.orderStatus)) { await cancelLeg(token, o.orderId, 'ENTRY_LEG'); continue; }
@@ -87,7 +123,7 @@ export async function squareOff(token: string, why: string): Promise<{ done: str
     }
     await sleep(1500);
     // every bot stock still open: cancel its orders (target, SL-M) and close it, chasing the price (symbolOrders exitNow)
-    const ids = new Set(bot.map((o) => String(o.securityId)));
+    const ids = new Set([...bot, ...plain].map((o) => String(o.securityId)));
     for (const p of await positions(token)) {
       const id = String(p.securityId);
       if (!ids.has(id) || p.productType !== 'INTRADAY' || !p.netQty) continue;

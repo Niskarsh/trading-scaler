@@ -67,7 +67,7 @@ export function marketOrder(token: string, o: { securityId: string; side: 'BUY' 
 export interface PlainOrder {
   orderId: string; correlationId?: string; orderStatus: string; transactionType: string; productType: string; orderType: string; validity?: string;
   tradingSymbol?: string; securityId: string; quantity: number; remainingQuantity?: number; filledQty?: number; price?: number; triggerPrice?: number;
-  disclosedQuantity?: number; legName?: string;
+  disclosedQuantity?: number; legName?: string; averageTradedPrice?: number; omsErrorDescription?: string; createTime?: string;
 }
 export const orderList = (token: string) => req<PlainOrder[]>(token, 'GET', '/orders').then((r) => (Array.isArray(r) ? r : []));
 export const cancelOrder = (token: string, orderId: string) => req<unknown>(token, 'DELETE', `/orders/${orderId}`);

@@ -27,12 +27,18 @@ interface Shared {
   slm: Map<string, number>;
   /** order actions Dhan refused once: never retried by themselves (no loops) */
   failed: Set<string>;
+  /** Algo Live entries waiting to fill: once filled, their stop and target are placed (src/lib/slmStops.ts) */
+  pending: Map<string, { correlationId: string; symbol: string; side: 'BUY' | 'SELL'; stop: number; target: number }>;
+  /** when a stop / target pair was placed on a stock (a fresh pair is not taken for "position closed" while the position list catches up) */
+  pairAt: Map<string, number>;
 }
 const g = globalThis as unknown as { __te?: Shared };
-export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], exiting: new Set(), slm: new Map(), failed: new Set() });
+export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], exiting: new Set(), slm: new Map(), failed: new Set(), pending: new Map(), pairAt: new Map() });
 shared.exiting ??= new Set();
 shared.slm ??= new Map();
 shared.failed ??= new Set();
+shared.pending ??= new Map();
+shared.pairAt ??= new Map();
 
 export function log(msg: string) {
   const line = `${new Date().toISOString()} ${msg}`;

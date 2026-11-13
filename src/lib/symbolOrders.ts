@@ -1,6 +1,7 @@
-import { cancelLeg, cancelOrder, limitOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, stopLimitOrder, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
+import { cancelLeg, cancelOrder, marketOrder, modifyOrder, modifySuperLeg, orderList, positions, superOrders, type PlainOrder, type Position, type SuperOrder } from './dhanBot';
 import { istNow, log, shared } from './te';
 import { streamUp } from './orderStream';
+import { placePair } from './slmStops';
 
 /**
  * One stock's orders and position, for tradereye's chart buttons (Flatten, Clear all, Break-even, Add stop, dragging an
@@ -144,40 +145,23 @@ export async function exitNow(token: string, securityId: string, why: string): P
 }
 
 /**
- * Add stop: for the open position, when it has no stop on the closing side, a stop at `stop` and (if given, and no
- * exit limit is there yet) a LIMIT at `target`, as a pair. Dhan's API takes no stop without a limit price (13 Nov 2026:
- * an SL-M was refused with DH-906), so the stop is a stop-limit whose limit sits STOP_LIMIT_BUFFER_PCT (0.5%) past
- * the trigger: once triggered it fills at the best price up to there. The pair: the order stream (src/lib/orderStream.ts) cancels the
- * other when one fills, and keeps their quantity to what is open. Refused when the order stream is not connected
- * (without it nothing would cancel the other one).
+ * Add stop: for the open position, when it has no stop on the closing side, a stop-limit at `stop` and (if given, and
+ * no exit limit is there yet) a target LIMIT, as a pair (src/lib/slmStops.ts). Refused when the order stream is not
+ * connected (without it nothing would cancel the other one when one fills).
  */
 export async function addStop(token: string, securityId: string, stop: number, target?: number) {
   if (!streamUp()) throw new Error('the order stream to Dhan is not connected, so the stop and target could not cancel each other: not placed');
-  const x = await load(token, securityId);
-  const b = bookOf(securityId, x);
+  const b = bookOf(securityId, await load(token, securityId));
   const p = b.position;
   if (!p) throw new Error('no open position on this stock');
-  const side: 'BUY' | 'SELL' = p.netQty > 0 ? 'SELL' : 'BUY', qty = Math.abs(p.netQty), dir = p.netQty > 0 ? 1 : -1;
+  const side: 'BUY' | 'SELL' = p.netQty > 0 ? 'SELL' : 'BUY', dir = p.netQty > 0 ? 1 : -1;
   if (b.working.some((w) => w.role === 'stop' && w.side === side)) throw new Error('this position already has a stop');
-  const st = Math.round(stop * 20) / 20, tg = target ? Math.round(target * 20) / 20 : undefined;
-  if (!(st > 0)) throw new Error('bad stop price');
-  if (tg !== undefined && (dir > 0 ? !(tg > st) : !(tg < st))) throw new Error(`the target ${tg} is on the wrong side of the stop ${st}`);
-  const date = istNow().date.replace(/-/g, '');
-  const buf = Number(process.env.STOP_LIMIT_BUFFER_PCT ?? 0.5) / 100;
-  const lim = side === 'BUY' ? Math.ceil((st * (1 + buf)) / 0.05) * 0.05 : Math.floor((st * (1 - buf)) / 0.05) * 0.05;
-  await stopLimitOrder(token, { securityId, side, qty, trigger: st, price: Number(lim.toFixed(2)), productType: p.productType, correlationId: `te-s${date}-${securityId}-${Date.now() % 10000}`.slice(0, 30) });
-  const placed = [`stop ${side} ${qty} at ${st} (limit ${lim.toFixed(2)})`];
-  const errors: string[] = [];
-  if (tg !== undefined && !b.working.some((w) => w.side === side && (w.role === 'target' || w.role === 'limit'))) {
-    try {
-      await limitOrder(token, { securityId, side, qty, price: tg, productType: p.productType, correlationId: `te-t${date}-${securityId}-${Date.now() % 10000}`.slice(0, 30) });
-      placed.push(`target ${side} ${qty} at ${tg}`);
-    } catch (e) { errors.push(`target not placed: ${(e as Error).message}`); }
-  }
-  shared.slm.set(securityId, st);
-  log(`add stop ${securityId}: ${placed.join(', ')}${errors.length ? ` · ${errors.join('; ')}` : ''}`);
+  if (!(stop > 0)) throw new Error('bad stop price');
+  if (target && (dir > 0 ? !(target > stop) : !(target < stop))) throw new Error(`the target ${target} is on the wrong side of the stop ${stop}`);
+  const hasExit = b.working.some((w) => w.side === side && (w.role === 'target' || w.role === 'limit'));
+  const r = await placePair(token, { securityId, side, qty: Math.abs(p.netQty), stop, target: hasExit ? undefined : target, productType: p.productType, why: 'Add stop' });
   await sleep(600);
-  return { done: placed, errors, book: await book(token, securityId) };
+  return { ...r, book: await book(token, securityId) };
 }
 
 /** Clear all: cancel every working order of the stock (the position, if any, is left as it is) */
