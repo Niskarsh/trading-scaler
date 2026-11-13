@@ -90,7 +90,7 @@ export function modifySuperLeg(token: string, orderId: string, leg: 'STOP_LOSS_L
     : { dhanClientId: clientIdOf(token), orderId, legName: leg, targetPrice: price });
 }
 
-/** a plain LIMIT order (the stop guard's and Flatten's exit: a price through the market, so it fills at once at the best price) */
+/** a plain LIMIT order (the target of an Add-stop pair) */
 export function limitOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; price: number; correlationId: string; productType?: string }) {
   return req<{ orderId: string; orderStatus: string }>(token, 'POST', '/orders', {
     dhanClientId: clientIdOf(token), correlationId: o.correlationId, transactionType: o.side, exchangeSegment: 'NSE_EQ', productType: o.productType ?? 'INTRADAY',
@@ -98,14 +98,6 @@ export function limitOrder(token: string, o: { securityId: string; side: 'BUY' |
   });
 }
 
-/** last traded prices of NSE stocks (Dhan's market quote API: one call a second at most) */
-export async function ltps(token: string, securityIds: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (!securityIds.length) return out;
-  const j = await req<{ data?: { NSE_EQ?: Record<string, { last_price?: number }> } }>(token, 'POST', '/marketfeed/ltp', { NSE_EQ: securityIds.map(Number) }, { 'client-id': clientIdOf(token) });
-  for (const [id, v] of Object.entries(j?.data?.NSE_EQ ?? {})) if (Number(v?.last_price) > 0) out.set(String(id), Number(v.last_price));
-  return out;
-}
 
 /** a stop-loss MARKET order (SL-M): sits at the exchange, and once the price touches the trigger it goes out as a market order */
 export function slmOrder(token: string, o: { securityId: string; side: 'BUY' | 'SELL'; qty: number; trigger: number; correlationId: string; productType?: string }) {

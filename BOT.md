@@ -18,30 +18,26 @@ server's fixed IP.
   - only between `BOT_FROM` (09:30) and `BOT_TO` (11:05) IST;
   - no position above `BOT_MAX_NOTIONAL` (₹75,000).
 - **15:15 IST**: closes every bot position. It cancels entries that never filled, cancels the stop and target, then
-  buys back at market. It uses the Dhan token tradereye last sent (kept in memory only). Orders you place by hand are
-  never touched.
+  for each bot stock still open cancels every order of that stock (its SL-M too) and buys back at market. It uses the
+  Dhan token tradereye last sent (kept in memory only).
 - **Chart buttons (one stock, tradereye's Charts page)**: these act on *every* order of that one stock, hand-placed
   ones included, and only when you press the button on that stock's chart (at once, no confirmation).
   `book` lists its position and working orders; `clearall` cancels its working orders (the position stays);
   `flatten` cancels them, waits until Dhan shows them gone (cancelling again if needed), then closes the position
-  with a limit through the market, re-priced until flat (never while a stop or target is still live: it says which); `move` moves a stop / target / limit (a dragged line, or Break-even); `cancel`
-  cancels one order (the ✕ on its line). None of them opens a new position. Logic: `src/lib/symbolOrders.ts`.
+  at market (never while a stop or target is still live: it says which); `move` moves a stop / target / limit (a
+  dragged line, or Break-even); `cancel` cancels one order (the ✕ on its line); `addstop` (below). None of them opens
+  a new position. Logic: `src/lib/symbolOrders.ts`.
 - **Algo Live stops are SL-M orders** (`src/lib/slmStops.ts`): once a bot entry fills, its super order's stop leg is
-  cancelled and an SL-M (`STOP_LOSS_MARKET`) at the same price takes its place, sitting at the exchange; when the
-  price touches it, it goes out as a market order. The target stays the super order's leg. This server does the
-  one-cancels-the-other: when the position is flat (SL-M or target filled), what is left is cancelled; when the target
-  part-fills, the SL-M's quantity comes down to what is still open. An SL-M you cancel yourself (✕ / Clear all) is not
-  put back. `BOT_STOP=super` keeps the old super-order stop leg. The 15:15 square-off cancels the SL-M and target too.
-- **Stop guard** (`src/lib/stopGuard.ts`, the backstop; for an SL-M it waits `SLM_GRACE_MS`, 2500, first): since March 2026 Dhan sends no API order as a pure market order. A triggered
-  stop (a super order's stop leg, or an SL order) goes out as a LIMIT, and in a fast move it is left behind unfilled
-  while the loss grows. Every 2 s in market hours this server reads every open NSE position, remembers its stop (it
-  follows a dragged or break-even stop), and the moment the last price is past the stop with the position still
-  open, it closes it: cancels the stuck exit and every other order of that stock, waits until Dhan shows them gone,
-  then sends a buy / sell 2% through the last price (fills at once at the best prices, like a market order),
-  re-priced until flat. A stop you
-  remove yourself (price not past it) is forgotten. Env (all optional): `STOP_GUARD=off`, `GUARD_TICK_MS` (2000),
-  `GUARD_GRACE_MS` (0), `EXIT_CHASE_PCT` (2). It uses the token tradereye last sent and Dhan's last-price API
-  (Data API). Every action is in the log (`pm2 logs`).
+  cancelled and an SL-M (`STOP_LOSS_MARKET`) at the same price takes its place at the exchange; when the price touches
+  it, it goes out as a market order. The target stays the super order's leg. `BOT_STOP=super` keeps the old stop leg.
+- **Add stop** (tradereye's Charts page, `addstop`): for an open position with no stop, an SL-M at Algo Live's stop and
+  a target LIMIT at its target, as a pair.
+- **One-cancels-the-other, from Dhan's order stream** (`src/lib/orderStream.ts`, `wss://api-order-update.dhan.co`):
+  no polling. Dhan pushes a message when any order changes; each one runs a sync (three reads): position flat, the
+  SL-M / target left over is cancelled; part closed, their quantity comes down to what is open; an SL-M that failed
+  to place is tried again (one you cancel yourself is not put back). The stream connects with the token tradereye last
+  sent and reconnects by itself. **Needs Node 22+** (built-in WebSocket): without it the swap never happens and Algo
+  Live keeps its super-order stop, and Add stop is refused. Check with `node -v`.
 - **Everything else** (your existing pages and APIs) now asks for a password (HTTP Basic: user `UI_USER`, default
   `nik`, password `UI_PASSWORD`).
 
