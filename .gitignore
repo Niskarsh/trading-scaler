@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# stop / target bookkeeping (src/lib/te.ts)
+.te-gone-legs.json

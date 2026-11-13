@@ -1,4 +1,5 @@
 import { createDecipheriv, createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 /**
  * The bridge from tradereye (its Algo Live page). Every call arrives sealed with AES-256-GCM under a key derived from
@@ -29,16 +30,32 @@ interface Shared {
   failed: Set<string>;
   /** Algo Live entries waiting to fill: once filled, their stop and target are placed (src/lib/slmStops.ts) */
   pending: Map<string, { correlationId: string; symbol: string; side: 'BUY' | 'SELL'; stop: number; target: number }>;
+  /** super-order legs ('<orderId>:<leg>') cancelled through this server: Dhan keeps listing a cancelled leg as PENDING, so they are treated as gone */
+  goneLegs: Set<string>;
   /** when a stop / target pair was placed on a stock (a fresh pair is not taken for "position closed" while the position list catches up) */
   pairAt: Map<string, number>;
 }
 const g = globalThis as unknown as { __te?: Shared };
-export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], exiting: new Set(), slm: new Map(), failed: new Set(), pending: new Map(), pairAt: new Map() });
+export const shared: Shared = (g.__te ??= { token: null, tokenAt: 0, seen: new Map(), squaredOff: null, squaring: false, log: [], exiting: new Set(), slm: new Map(), failed: new Set(), pending: new Map(), pairAt: new Map(), goneLegs: new Set() });
 shared.exiting ??= new Set();
 shared.slm ??= new Map();
 shared.failed ??= new Set();
 shared.pending ??= new Map();
 shared.pairAt ??= new Map();
+shared.goneLegs ??= new Set();
+
+/** today's cancelled super-order legs survive a restart (Dhan keeps listing them as PENDING): .te-gone-legs.json */
+const GONE_FILE = '.te-gone-legs.json';
+const today = () => new Date(Date.now() + 19800_000).toISOString().slice(0, 10);
+try {
+  const f = JSON.parse(readFileSync(GONE_FILE, 'utf8')) as { date?: string; legs?: string[] };
+  if (f.date === today()) for (const k of f.legs ?? []) shared.goneLegs.add(k);
+} catch { /* none yet */ }
+/** a super-order leg ('<orderId>:<leg>') is gone: remembered for the day */
+export function markGone(key: string) {
+  shared.goneLegs.add(key);
+  try { writeFileSync(GONE_FILE, JSON.stringify({ date: today(), legs: [...shared.goneLegs] })); } catch { /* memory still has it */ }
+}
 
 export function log(msg: string) {
   const line = `${new Date().toISOString()} ${msg}`;

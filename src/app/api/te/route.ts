@@ -60,6 +60,7 @@ export async function POST(req: Request) {
     }
   } catch (e) {
     log(`${m.action} failed: ${(e as Error).message}`);
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    // 409, not 502: Cloudflare (in front of this server) replaces a 502's body with its own page, and the reason was lost
+    return NextResponse.json({ error: (e as Error).message }, { status: 409 });
   }
 }
