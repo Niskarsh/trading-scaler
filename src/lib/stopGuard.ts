@@ -12,15 +12,16 @@ import { istNow, log, shared } from './te';
  * Every GUARD_TICK_MS (2 s) in market hours, for every open NSE position:
  *  - it remembers the position's stop (the nearest stop order on the closing side; it follows a dragged / break-even stop);
  *  - if the stop order is gone and the price is NOT past it, he took it away himself: it is forgotten;
- *  - if the last price has been past the stop for GUARD_GRACE_MS (3 s: Dhan's own exit gets the first go) and the
- *    position is still open, it closes it (src/lib/symbolOrders.ts exitNow): cancels the stuck exit and every other
- *    working order of the stock, waits until they are gone, then a limit through the market, re-priced until flat.
+ *  - the moment the last price is past the stop with the position still open (GUARD_GRACE_MS, default 0, can add a
+ *    wait), it closes it at market in effect (src/lib/symbolOrders.ts exitNow): cancels the stuck exit and every other
+ *    working order of the stock, waits until they are gone, then a buy / sell priced EXIT_CHASE_PCT (2%) through the
+ *    last price: it fills at once at the best prices there are, like a market order, re-priced until flat.
  * It uses the Dhan token tradereye last sent (the Charts page and Algo Live send it every few seconds). STOP_GUARD=off
  * turns it off.
  */
 
 const TICK = Number(process.env.GUARD_TICK_MS ?? 2000);
-const GRACE = Number(process.env.GUARD_GRACE_MS ?? 3000);
+const GRACE = Number(process.env.GUARD_GRACE_MS ?? 0);
 let running = false, lastErr = '';
 
 /** past the stop: a long's price at / below it, a short's at / above it */
@@ -52,7 +53,7 @@ export async function guardTick(token: string, now = Date.now()) {
     }
     if (!mem || !ltp) continue;
     if (!pastStop(ltp, mem.stop, mem.dir)) { mem.beyondSince = null; continue; }
-    if (mem.beyondSince === null) { mem.beyondSince = now; continue; }
+    if (mem.beyondSince === null) mem.beyondSince = now;
     if (now - mem.beyondSince < GRACE) continue;
     log(`stop guard: ${id} ${dir > 0 ? 'long' : 'short'} ${Math.abs(p.netQty)}, price ${ltp} past its stop ${mem.stop} for ${Math.round((now - mem.beyondSince) / 1000)} s and still open: closing it`);
     // not awaited: one stuck stock must not hold up the others

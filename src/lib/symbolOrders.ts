@@ -16,7 +16,7 @@ import { istNow, log, shared } from './te';
 export const OPEN = ['PENDING', 'TRANSIT', 'PART_TRADED', 'TRIGGERED'];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** how far through the last price an exit limit is priced (%), so it fills at once */
-const CHASE_PCT = Number(process.env.EXIT_CHASE_PCT ?? 1);
+const CHASE_PCT = Number(process.env.EXIT_CHASE_PCT ?? 2);
 
 /** a working order as the chart draws it */
 export interface Working {

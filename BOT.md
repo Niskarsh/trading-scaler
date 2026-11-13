@@ -29,11 +29,12 @@ server's fixed IP.
 - **Stop guard** (`src/lib/stopGuard.ts`): since March 2026 Dhan sends no API order as a pure market order. A triggered
   stop (a super order's stop leg, or an SL order) goes out as a LIMIT, and in a fast move it is left behind unfilled
   while the loss grows. Every 2 s in market hours this server reads every open NSE position, remembers its stop (it
-  follows a dragged or break-even stop), and if the last price stays past the stop for 3 s with the position still
+  follows a dragged or break-even stop), and the moment the last price is past the stop with the position still
   open, it closes it: cancels the stuck exit and every other order of that stock, waits until Dhan shows them gone,
-  then sends a limit 1% through the last price (fills at once at the best price), re-priced until flat. A stop you
+  then sends a buy / sell 2% through the last price (fills at once at the best prices, like a market order),
+  re-priced until flat. A stop you
   remove yourself (price not past it) is forgotten. Env (all optional): `STOP_GUARD=off`, `GUARD_TICK_MS` (2000),
-  `GUARD_GRACE_MS` (3000), `EXIT_CHASE_PCT` (1). It uses the token tradereye last sent and Dhan's last-price API
+  `GUARD_GRACE_MS` (0), `EXIT_CHASE_PCT` (2). It uses the token tradereye last sent and Dhan's last-price API
   (Data API). Every action is in the log (`pm2 logs`).
 - **Everything else** (your existing pages and APIs) now asks for a password (HTTP Basic: user `UI_USER`, default
   `nik`, password `UI_PASSWORD`).
